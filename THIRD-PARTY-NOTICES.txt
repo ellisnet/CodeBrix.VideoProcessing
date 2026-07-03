@@ -1,0 +1,144 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+CodeBrix.VideoProcessing is a fully managed, cross-platform FFmpeg/FFprobe
+wrapper for .NET. It is a port of the open-source FFMpegCore library, with the
+open-source Instances process-wrapper library vendored directly into it (so the
+CodeBrix.VideoProcessing.MitLicenseForever NuGet package has no runtime
+dependency on a separate "Instances" package). All incorporated source has been
+re-namespaced under CodeBrix.VideoProcessing.* and adapted to the CodeBrix
+family conventions (target .NET 10.0, nullable reference type annotations
+removed, implicit usings made explicit, file-scoped namespaces).
+
+Both incorporated projects are licensed under the MIT License, which is
+compatible with this project's MIT License. The full text of each upstream
+license is reproduced below, as required by the MIT License.
+
+The optional CodeBrix.VideoProcessing.Extensions.Imaging.MitLicenseForever
+package (a separate project in this repository) provides an image bridge whose
+design is adapted from FFMpegCore's image-extension projects
+(FFMpegCore.Extensions.SkiaSharp and FFMpegCore.Extensions.System.Drawing.Common,
+part of the FFMpegCore repository credited in entry 1 below, MIT). Rather than
+copying their SkiaSharp / System.Drawing.Common code, it re-expresses the same
+three operations (in-memory snapshot, image-as-video-frame, poster-plus-audio)
+purely in terms of CodeBrix.Imaging, taken as a package reference. It therefore
+inherits the FFMpegCore MIT attribution below and introduces no additional
+third-party source.
+
+================================================================================
+1. FFMpegCore
+================================================================================
+
+Project:      FFMpegCore
+Homepage:     https://github.com/rosenbjerg/FFMpegCore
+Version:      5.4.0 (main library project "FFMpegCore" only; the
+              FFMpegCore.Extensions.* projects were NOT incorporated)
+Authors:      Malte Rosenbjerg, Vlad Jerca, Max Bagryantsev
+License:      MIT
+
+What was incorporated:
+  The complete source of the main "FFMpegCore" library project. Every .cs file
+  is present under src/CodeBrix.VideoProcessing/ and carries a
+  `//was previously: FFMpegCore.<...>;` provenance comment on its namespace line.
+
+Modifications made during the port:
+  - Namespaces renamed from FFMpegCore[.*] to CodeBrix.VideoProcessing[.*].
+  - References to the Instances library renamed to
+    CodeBrix.VideoProcessing.Instances[.Exceptions] (see entry 2).
+  - Target framework narrowed to net10.0.
+  - Nullable reference-type annotations ('?' on reference types) and the
+    null-forgiveness '!' operator removed (CodeBrix family: nullable disabled).
+  - Implicit usings disabled; the SDK's implicit global usings added explicitly.
+  - The runtime "System.Text.Json" package reference was dropped, as
+    System.Text.Json ships in the .NET 10 shared framework.
+  - The assembly-level InternalsVisibleTo attribute now targets
+    CodeBrix.VideoProcessing.Tests.
+  - No functional/behavioral source changes were made.
+
+Note: the file src/CodeBrix.VideoProcessing/FFMpeg/SnapshotArgumentBuilder.cs
+carries an upstream top-of-file header reading "Copyright (c) Microsoft. All
+Rights Reserved. Licensed under the MIT license." That header was present in the
+FFMpegCore source and has been preserved verbatim.
+
+--------------------------------------------------------------------------------
+FFMpegCore — MIT License
+--------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2023 Vlad Jerca
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+2. Instances
+================================================================================
+
+Project:      Instances
+Homepage:     https://github.com/rosenbjerg/Instances
+Version:      3.0.2 (main library project "Instances" only)
+Author:       Malte Rosenbjerg
+License:      MIT
+
+What was incorporated:
+  The complete source of the "Instances" library project, vendored under
+  src/CodeBrix.VideoProcessing/Instances/. Every .cs file carries a
+  `//was previously: Instances[.Exceptions];` provenance comment on its
+  namespace line.
+
+Modifications made during the port:
+  - Namespaces renamed from Instances / Instances.Exceptions to
+    CodeBrix.VideoProcessing.Instances / CodeBrix.VideoProcessing.Instances.Exceptions.
+  - Block-scoped namespaces converted to file-scoped namespaces.
+  - Target framework narrowed to net10.0.
+  - Nullable reference-type annotations and the null-forgiveness '!' operator
+    removed (CodeBrix family: nullable disabled).
+  - No functional/behavioral source changes were made.
+
+--------------------------------------------------------------------------------
+Instances — MIT License
+--------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2020 Malte Rosenbjerg
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+
+If you have any questions about any third-party code or services referenced
+here, or if you believe that any third-party code has been included in
+CodeBrix.VideoProcessing in error, please open a new issue at:
+https://github.com/ellisnet/CodeBrix.VideoProcessing/issues
+
+END OF THIRD-PARTY SOFTWARE NOTICES AND INFORMATION

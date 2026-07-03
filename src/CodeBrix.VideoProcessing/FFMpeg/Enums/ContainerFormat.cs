@@ -1,0 +1,56 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace CodeBrix.VideoProcessing.Enums; //was previously: FFMpegCore.Enums;
+
+public class ContainerFormat
+{
+    private static readonly Regex FormatRegex = new(@"([D ])([E ])\s+([a-z0-9_]+)\s+(.+)");
+
+    internal ContainerFormat(string name)
+    {
+        Name = name;
+    }
+
+    public string Name { get; }
+    public bool DemuxingSupported { get; private set; }
+    public bool MuxingSupported { get; private set; }
+    public string Description { get; private set; } = null;
+
+    public string Extension
+    {
+        get
+        {
+            if (GlobalFFOptions.Current.ExtensionOverrides.ContainsKey(Name))
+            {
+                return GlobalFFOptions.Current.ExtensionOverrides[Name];
+            }
+
+            return "." + Name;
+        }
+    }
+
+    internal static bool TryParse(string line, out ContainerFormat fmt)
+    {
+        var match = FormatRegex.Match(line);
+        if (!match.Success)
+        {
+            fmt = null;
+            return false;
+        }
+
+        fmt = new ContainerFormat(match.Groups[3].Value)
+        {
+            DemuxingSupported = match.Groups[1].Value != " ",
+            MuxingSupported = match.Groups[2].Value != " ",
+            Description = match.Groups[4].Value
+        };
+        return true;
+    }
+}

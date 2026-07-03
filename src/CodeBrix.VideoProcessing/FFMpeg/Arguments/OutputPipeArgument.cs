@@ -1,0 +1,34 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Pipes;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using CodeBrix.VideoProcessing.Pipes;
+
+namespace CodeBrix.VideoProcessing.Arguments; //was previously: FFMpegCore.Arguments;
+
+public class OutputPipeArgument : PipeArgument, IOutputArgument
+{
+    public readonly IPipeSink Reader;
+
+    public OutputPipeArgument(IPipeSink reader) : base(PipeDirection.In)
+    {
+        Reader = reader;
+    }
+
+    public override string Text => $"\"{PipePath}\" -y";
+
+    protected override async Task ProcessDataAsync(CancellationToken token)
+    {
+        await Pipe.WaitForConnectionAsync(token).ConfigureAwait(false);
+        if (!Pipe.IsConnected)
+        {
+            throw new TaskCanceledException();
+        }
+
+        await Reader.ReadAsync(Pipe, token).ConfigureAwait(false);
+    }
+}

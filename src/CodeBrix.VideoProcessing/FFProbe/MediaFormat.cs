@@ -1,0 +1,21 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace CodeBrix.VideoProcessing; //was previously: FFMpegCore;
+
+public class MediaFormat : ITagsContainer
+{
+    public TimeSpan Duration { get; set; }
+    public TimeSpan StartTime { get; set; }
+    public string FormatName { get; set; } = null;
+    public string FormatLongName { get; set; } = null;
+    public int StreamCount { get; set; }
+    public double ProbeScore { get; set; }
+    public double BitRate { get; set; }
+    public Dictionary<string, string> Tags { get; set; }
+}

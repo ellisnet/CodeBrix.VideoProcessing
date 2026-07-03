@@ -1,0 +1,36 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace CodeBrix.VideoProcessing.Pipes; //was previously: FFMpegCore.Pipes;
+
+public class StreamPipeSink : IPipeSink
+{
+    public StreamPipeSink(Func<Stream, CancellationToken, Task> writer)
+    {
+        Writer = writer;
+    }
+
+    public StreamPipeSink(Stream destination)
+    {
+        Writer = (inputStream, cancellationToken) => inputStream.CopyToAsync(destination, BlockSize, cancellationToken);
+    }
+
+    public Func<Stream, CancellationToken, Task> Writer { get; }
+    public int BlockSize { get; set; } = 4096;
+    public string Format { get; set; } = string.Empty;
+
+    public async Task ReadAsync(Stream inputStream, CancellationToken cancellationToken)
+    {
+        await Writer(inputStream, cancellationToken).ConfigureAwait(false);
+    }
+
+    public string GetFormat()
+    {
+        return Format;
+    }
+}
