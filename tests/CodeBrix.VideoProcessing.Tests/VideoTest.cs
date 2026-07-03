@@ -5,7 +5,7 @@ using CodeBrix.VideoProcessing.Arguments;
 using CodeBrix.VideoProcessing.Enums;
 using CodeBrix.VideoProcessing.Exceptions;
 using CodeBrix.VideoProcessing.Pipes;
-using CodeBrix.VideoProcessing.Extensions.Imaging;
+using CodeBrix.VideoProcessing.Imaging;
 using CodeBrix.VideoProcessing.Tests.Resources;
 using CodeBrix.VideoProcessing.Tests.Utilities;
 using System;

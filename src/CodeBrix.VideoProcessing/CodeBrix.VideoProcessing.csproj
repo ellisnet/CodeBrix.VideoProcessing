@@ -62,7 +62,7 @@
     <Product>CodeBrix.VideoProcessing</Product>
     <Title>CodeBrix.VideoProcessing</Title>
     <Authors>Jeremy Ellis</Authors>
-    <Description>A fully managed, cross-platform FFmpeg/FFprobe wrapper for .NET that makes media analysis and conversion easy. A dependency-free port of FFMpegCore with the Instances process wrapper vendored in; exposes video/audio transcoding, probing, snapshots, piping, and argument building under the CodeBrix.VideoProcessing namespace.</Description>
+    <Description>A fully managed, cross-platform FFmpeg/FFprobe wrapper for .NET that makes media analysis and conversion easy. A port of FFMpegCore with the Instances process wrapper vendored in; exposes video/audio transcoding, probing, snapshots, piping, argument building, and an in-memory image bridge (snapshots as CodeBrix.Imaging images) under the CodeBrix.VideoProcessing namespace.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.VideoProcessing</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ellisnet/CodeBrix.VideoProcessing</RepositoryUrl>
@@ -73,8 +73,12 @@
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     <IsPackable>true</IsPackable>
-    <PackageTags>ffmpeg;ffprobe;video;audio;convert;mediafile;analyze;muxing;CodeBrix</PackageTags>
+    <PackageTags>ffmpeg;ffprobe;video;audio;convert;mediafile;analyze;muxing;snapshot;image;CodeBrix</PackageTags>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.164.1087" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="..\..\icon-codebrix-128.png" Pack="true" PackagePath="" />

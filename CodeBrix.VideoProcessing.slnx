@@ -11,5 +11,4 @@
     <Project Path="tests/CodeBrix.VideoProcessing.Tests.WaitingProgram/CodeBrix.VideoProcessing.Tests.WaitingProgram.csproj" />
   </Folder>
   <Project Path="src/CodeBrix.VideoProcessing/CodeBrix.VideoProcessing.csproj" />
-  <Project Path="src/CodeBrix.VideoProcessing.Extensions.Imaging/CodeBrix.VideoProcessing.Extensions.Imaging.csproj" />
 </Solution>

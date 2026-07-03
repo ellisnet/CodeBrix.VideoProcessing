@@ -6,7 +6,7 @@ using CodeBrix.Imaging;
 using CodeBrix.Imaging.PixelFormats;
 using CodeBrix.VideoProcessing.Pipes;
 
-namespace CodeBrix.VideoProcessing.Extensions.Imaging;
+namespace CodeBrix.VideoProcessing.Imaging;
 
 /// <summary>
 ///     Wraps a CodeBrix.Imaging <see cref="Image{TPixel}">RGBA image</see> as an

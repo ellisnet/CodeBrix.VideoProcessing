@@ -20,7 +20,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CodeBrix.VideoProcessing\CodeBrix.VideoProcessing.csproj" />
-    <ProjectReference Include="..\..\src\CodeBrix.VideoProcessing.Extensions.Imaging\CodeBrix.VideoProcessing.Extensions.Imaging.csproj" />
   </ItemGroup>
 
   <ItemGroup>

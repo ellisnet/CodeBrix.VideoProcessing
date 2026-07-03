@@ -1,8 +1,8 @@
 # CodeBrix.VideoProcessing
 
 A fully managed, cross-platform FFmpeg/FFprobe wrapper library for .NET that makes media analysis and conversion easy.
-CodeBrix.VideoProcessing is a dependency-free port of the popular [FFMpegCore](https://github.com/rosenbjerg/FFMpegCore) library (with the [Instances](https://github.com/rosenbjerg/Instances) process wrapper vendored directly in), exposing the same functionality under the `CodeBrix.VideoProcessing` namespace.
-CodeBrix.VideoProcessing has no dependencies other than .NET, and is provided as a .NET 10 library and associated `CodeBrix.VideoProcessing.MitLicenseForever` NuGet package.
+CodeBrix.VideoProcessing is a port of the popular [FFMpegCore](https://github.com/rosenbjerg/FFMpegCore) library (with the [Instances](https://github.com/rosenbjerg/Instances) process wrapper vendored directly in), exposing the same functionality under the `CodeBrix.VideoProcessing` namespace.
+CodeBrix.VideoProcessing's only NuGet dependency is `CodeBrix.Imaging` (itself a fully managed, cross-platform, dependency-free CodeBrix library), used by the in-memory image bridge; it is provided as a .NET 10 library and associated `CodeBrix.VideoProcessing.MitLicenseForever` NuGet package.
 
 CodeBrix.VideoProcessing supports applications and assemblies that target Microsoft .NET version 10.0 and later.
 Microsoft .NET version 10.0 is a Long-Term Supported (LTS) version of .NET, and was released on Nov 11, 2025; and will be actively supported by Microsoft until Nov 14, 2028.
@@ -19,8 +19,7 @@ Please update your C#/.NET code and projects to the latest LTS version of Micros
 * Piping raw audio/video frames into and out of FFmpeg via `IPipeSource` / `IPipeSink`
 * Building and serialising FFmpeg metadata (`MetaDataBuilder`)
 * A built-in, elegant process wrapper (the vendored `CodeBrix.VideoProcessing.Instances` namespace)
-
-For an in-memory image bridge (grab a snapshot as a `CodeBrix.Imaging` image, feed images into FFmpeg as frames, or mux an image + audio into a video), see the companion `CodeBrix.VideoProcessing.Extensions.Imaging.MitLicenseForever` package in this repository.
+* An in-memory image bridge under `CodeBrix.VideoProcessing.Imaging` (built on CodeBrix.Imaging): grab a snapshot as a `CodeBrix.Imaging` image (`FFMpegImage.Snapshot`), feed images into FFmpeg as frames (`ImageVideoFrameWrapper`), or mux an image + audio into a video (`ImageExtensions.AddAudio`)
 
 ## Sample Code
 

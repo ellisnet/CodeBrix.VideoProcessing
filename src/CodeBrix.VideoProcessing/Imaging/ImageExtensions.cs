@@ -3,7 +3,7 @@ using System.IO;
 using CodeBrix.Imaging;
 using CodeBrix.VideoProcessing;
 
-namespace CodeBrix.VideoProcessing.Extensions.Imaging;
+namespace CodeBrix.VideoProcessing.Imaging;
 
 /// <summary>
 ///     Extension helpers that bridge CodeBrix.Imaging images and

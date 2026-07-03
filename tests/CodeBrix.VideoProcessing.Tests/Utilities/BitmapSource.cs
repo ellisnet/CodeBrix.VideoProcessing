@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using CodeBrix.Imaging;
 using CodeBrix.Imaging.PixelFormats;
-using CodeBrix.VideoProcessing.Extensions.Imaging;
+using CodeBrix.VideoProcessing.Imaging;
 using CodeBrix.VideoProcessing.Pipes;
 
 namespace CodeBrix.VideoProcessing.Tests.Utilities;

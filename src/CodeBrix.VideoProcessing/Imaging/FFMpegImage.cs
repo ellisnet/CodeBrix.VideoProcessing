@@ -8,7 +8,7 @@ using CodeBrix.VideoProcessing;
 using CodeBrix.VideoProcessing.Pipes;
 using Size = System.Drawing.Size;
 
-namespace CodeBrix.VideoProcessing.Extensions.Imaging;
+namespace CodeBrix.VideoProcessing.Imaging;
 
 /// <summary>
 ///     Provides in-memory video snapshot helpers that return

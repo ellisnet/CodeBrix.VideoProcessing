@@ -13,16 +13,17 @@ Both incorporated projects are licensed under the MIT License, which is
 compatible with this project's MIT License. The full text of each upstream
 license is reproduced below, as required by the MIT License.
 
-The optional CodeBrix.VideoProcessing.Extensions.Imaging.MitLicenseForever
-package (a separate project in this repository) provides an image bridge whose
-design is adapted from FFMpegCore's image-extension projects
-(FFMpegCore.Extensions.SkiaSharp and FFMpegCore.Extensions.System.Drawing.Common,
-part of the FFMpegCore repository credited in entry 1 below, MIT). Rather than
-copying their SkiaSharp / System.Drawing.Common code, it re-expresses the same
-three operations (in-memory snapshot, image-as-video-frame, poster-plus-audio)
-purely in terms of CodeBrix.Imaging, taken as a package reference. It therefore
-inherits the FFMpegCore MIT attribution below and introduces no additional
-third-party source.
+The in-memory image bridge in the CodeBrix.VideoProcessing.Imaging namespace
+(src/CodeBrix.VideoProcessing/Imaging/) has a design adapted from FFMpegCore's
+image-extension projects (FFMpegCore.Extensions.SkiaSharp and
+FFMpegCore.Extensions.System.Drawing.Common, part of the FFMpegCore repository
+credited in entry 1 below, MIT). Rather than copying their SkiaSharp /
+System.Drawing.Common code, it re-expresses the same three operations (in-memory
+snapshot, image-as-video-frame, poster-plus-audio) purely in terms of
+CodeBrix.Imaging, taken as a package reference (CodeBrix.Imaging.Apache-
+LicenseForever, Apache-2.0 - compatible with this project's MIT license). It
+therefore inherits the FFMpegCore MIT attribution below and introduces no
+additional third-party source.
 
 ================================================================================
 1. FFMpegCore
