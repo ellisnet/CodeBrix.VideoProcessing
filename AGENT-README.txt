@@ -712,15 +712,21 @@ FFMpegMultiOutputOptions - several outputs from one decode
       tee muxer accepts belong there.
 
 
-FFMpegArgumentOptions - the OUTPUT side (all 51 methods)
+FFMpegArgumentOptions - the OUTPUT side (all 63 methods)
 --------------------------------------------------------
     public class FFMpegArgumentOptions : FFMpegArgumentsBase
 
 Every method returns FFMpegArgumentOptions, so they chain. The same class is
 also used for INPUT-side options (the `addArguments` callback on the input
 factories) - which method makes sense on which side is an ffmpeg question, not a
-C# one; Seek/EndSeek/WithDuration and the Audible keys are the usual input-side
-ones. The rendered flag each method produces is shown after the arrow.
+C# one; Seek/EndSeek/WithDuration, AutoRotate and the Audible keys are the usual
+input-side ones. The rendered flag each method produces is shown after the arrow.
+
+AutoRotate deserves a warning of its own: ffmpeg only honours -autorotate /
+-noautorotate when it appears BEFORE the -i it belongs to, so it must go in the
+addArguments callback of FromFileInput / AddFileInput. The builder emits an
+input's options ahead of its own -i, so that position is correct by
+construction. On an output it renders, and ffmpeg ignores it.
 
   Codecs and bitrate
     WithVideoCodec(Codec videoCodec)                     -> -c:v {name}
@@ -736,6 +742,11 @@ ones. The rendered flag each method produces is shown after the arrow.
     WithVariableBitrate(int vbr)                         -> -vbr {n}
     WithAudioSamplingRate(int samplingRate = 48000)      -> -ar {n}
     WithSpeedPreset(Speed speed)                         -> -preset {name}
+    WithSpeedPreset(int preset)                          -> -preset {n}
+    WithSubtitleCodec(Codec subtitleCodec)               -> -c:s {name}
+    WithSubtitleCodec(string subtitleCodec)              -> -c:s {name}
+    WithEncoderParams(string optionName,
+        params (string Key, string Value)[] parameters)  -> -{name} k=v:k=v
     WithFramerate(double framerate)                      -> -r {n}
 
   Geometry
@@ -789,6 +800,18 @@ ones. The rendered flag each method produces is shown after the arrow.
     WithoutMetadata()                                    -> -map_metadata -1
     WithAudibleActivationBytes(string activationBytes)   -> -activation_bytes {v}
     WithAudibleEncryptionKeys(string key, string iv)     -> -audible_key .. -audible_iv ..
+    WithMetadata(string key, string value)               -> -metadata k="v"
+    WithStreamMetadata(int streamIndex,
+        string key, string value)                        -> -metadata:s:N k="v"
+    WithStreamMetadata(Channel channel, int streamIndex,
+        string key, string value)                        -> -metadata:s:{t}:N k="v"
+    WithDisposition(int streamIndex,
+        params Disposition[] flags)                      -> -disposition:N a+b
+    WithDisposition(Channel channel, int streamIndex,
+        params Disposition[] flags)                      -> -disposition:{t}:N a+b
+    CuesToFront(bool enabled = true)                     -> -cues_to_front 1|0
+    ReserveIndexSpace(int bytes)                         -> -reserve_index_space {n}
+    AutoRotate(bool enabled = true)                      -> -autorotate / -noautorotate
     WithCustomArgument(string argument)                  -> the string, verbatim
     WithArgument(IArgument argument)                     -> argument.Text
 
@@ -1011,10 +1034,14 @@ reading a rendered value in a test.
 
   Writing your own: implement IArgument (a single `Text` property) and pass it
   to WithArgument. Implement IVideoFilterArgument / IAudioFilterArgument (Key +
-  Value) if you want it merged into an existing -vf / -af chain - but note those
-  two interfaces have no public "add" method on the filter option classes, so a
-  custom filter is added either by constructing VideoFiltersArgument yourself
-  and passing it to WithArgument, or (simpler) with WithCustomArgument.
+  Value) if you want it merged into an existing -vf / -af chain, and add it with
+  VideoFilterOptions.Custom(...) - or, for a filter you want to model properly,
+  construct VideoFiltersArgument yourself and pass it to WithArgument.
+
+  If your own filter argument escapes its own value (see "FILTER-GRAPH ESCAPING"
+  below), also implement the empty marker interface IPreEscapedFilterArgument so
+  the chain builder emits your Value verbatim instead of escaping its commas a
+  second time.
 
 FILTER OPTIONS - what goes inside WithVideoFilters / WithAudioFilters
 ----------------------------------------------------------------------
@@ -1032,6 +1059,61 @@ FILTER OPTIONS - what goes inside WithVideoFilters / WithAudioFilters
             double pixelBlackThreshold = 0.1)
         VideoFilterOptions BlackFrame(int amount = 98, int threshold = 32)
         VideoFilterOptions Pad(PadOptions padOptions)
+        VideoFilterOptions Custom(string rawFilterText)
+        VideoFilterOptions Custom(string filterName, string options)
+        VideoFilterOptions Custom(string filterName,
+            params (string Key, string Value)[] options)
+        VideoFilterOptions Fps(double fps)
+        VideoFilterOptions Fps(string fps)
+        VideoFilterOptions Lut3D(string cubePath,
+            Lut3DInterpolation interpolation = Lut3DInterpolation.Tetrahedral)
+        VideoFilterOptions Format(PixelFormat pixelFormat)
+        VideoFilterOptions Format(string pixelFormat)
+        VideoFilterOptions ZScale(ZScaleOptions options)
+        VideoFilterOptions ZScale(Action<ZScaleOptions> configure)
+        VideoFilterOptions Tonemap(TonemapAlgorithm algorithm, double? param = null,
+            double? desat = null, double? peak = null)
+        VideoFilterOptions Rotate(double radians)
+        VideoFilterOptions Rotate(string expression)
+
+  What the newer video filters render:
+        Custom("negate")                      -> negate            (verbatim)
+        Custom("drawbox", "x=10:y=10")        -> drawbox=x=10:y=10
+        Custom("lut3d", ("file", p))          -> lut3d=file={escaped p}
+        Fps(30)          / Fps("ntsc")        -> fps=30 / fps=ntsc
+        Lut3D(p)                              -> lut3d=file={escaped p}:interp=tetrahedral
+        Format("yuv420p")                     -> format=yuv420p
+        ZScale(z => { z.Transfer = "linear";
+                      z.Npl = 100; })         -> zscale=t=linear:npl=100
+        Tonemap(TonemapAlgorithm.Hable,
+                desat: 0)                     -> tonemap=hable:desat=0
+        Rotate(1.5707963) / Rotate("PI/2")    -> rotate=1.5707963 / rotate=PI/2
+
+  Every number is formatted with CultureInfo.InvariantCulture, so a whole number
+  prints without a decimal point and a decimal separator is never a comma.
+
+  Format(...) is the IN-CHAIN pixel-format conversion (the `format` filter);
+  ForcePixelFormat(...) on FFMpegArgumentOptions is the encoder-level -pix_fmt.
+  Rotate(...) is an arbitrary-angle resample; for the four right-angle cases
+  Transpose(...) is cheaper and lossless.
+
+  ZScaleOptions is a plain settable object; only the options you set are
+  emitted, always in this order - w, h, s, t, p, m, r, npl, d:
+        int? Width       -> w        (ignored when Size is set)
+        int? Height      -> h        (ignored when Size is set)
+        Size? Size       -> s=WxH
+        string Transfer  -> t        ZScaleTransfer.*   constants
+        string Primaries -> p        ZScalePrimaries.*  constants
+        string Matrix    -> m        ZScaleMatrix.*     constants
+        string Range     -> r        ZScaleRange.*      constants
+        double? Npl      -> npl      nominal peak luminance, cd/m2
+        string DitherMode-> d        ZScaleDither.*     constants
+  Rendering a ZScaleOptions with nothing set throws FFMpegArgumentException.
+  zscale needs libzimg in the ffmpeg build, and it needs to know the colour
+  space it is converting FROM: on a file whose colour metadata is unspecified,
+  or after a filter that hands it RGB, set Matrix (and/or reach for
+  Custom("zscale", ...) with zscale's input-side min/tin/pin options) or ffmpeg
+  reports "code 3074: no path between colorspaces".
 
     public class AudioFilterOptions
         List<IAudioFilterArgument> Arguments { get; }
@@ -1096,6 +1178,60 @@ FILTER OPTIONS - what goes inside WithVideoFilters / WithAudioFilters
         StyleOptions WithParameter(string key, string value)
         Emitted as the subtitles filter's `force_style` value, in ASS style
         format (e.g. "FontName", "PrimaryColour").
+
+FILTER-GRAPH ESCAPING, AND THE ONE -vf PER OUTPUT RULE
+-------------------------------------------------------
+ONE CHAIN PER OUTPUT. ffmpeg accepts a single -vf per output and silently keeps
+only the LAST one it is given, so a second WithVideoFilters call on the same
+output now throws FFMpegArgumentException instead of producing a command line
+that quietly drops half your filters. Build the whole chain in one call:
+
+    // WRONG - throws
+    .OutputToFile(out, true, o => o
+        .WithVideoFilters(f => f.Scale(1280, 720))
+        .WithVideoFilters(f => f.Fps(30)))
+
+    // RIGHT
+    .OutputToFile(out, true, o => o
+        .WithVideoFilters(f => f.Scale(1280, 720).Fps(30)))
+
+WithAudioFilters / -af behaves exactly the same way. Separate outputs (and an
+input's own callback) each have their own chain, so MultiOutput is unaffected.
+
+ESCAPING. ffmpeg unescapes a filter option value TWICE while it parses a
+filtergraph - once when the "name=options" filter description is tokenised, and
+once when that options string is split into key=value pairs. A free-text value
+therefore has to be escaped twice, which is what the newer filter arguments do
+for the values they own. Which characters get escaped depends on the shape you
+choose:
+
+    Custom(name, params (key, value)[])  each VALUE is escaped for BOTH passes:
+    Lut3D(path), Fps(string), Format,    \  '  :  ,  ;  [  ]  =
+    Rotate(string), ZScale values        a Windows path (C:\luts\warm.cube), a
+                                         path with a comma or a space, an
+                                         apostrophe - all survive.
+
+    Custom(name, "already:formed=opts")  only the characters that would END the
+                                         filter are escaped:  ,  ;  [  ]
+                                         : and = pass through so they keep
+                                         separating the options. The escaping is
+                                         not quote-aware, so a comma inside a
+                                         '...' section is escaped too; when that
+                                         matters, use the raw overload.
+
+    Custom("raw filter text")            NOTHING is escaped. You own every
+                                         backslash.
+
+A double-quote character in a value is not escaped by any of them: like every
+other path this library hands to ffmpeg, a path containing " is not supported.
+
+The older typed filters (Scale, Transpose, Mirror, Crop, Pad, DrawText,
+HardBurnSubtitle, BlackDetect, BlackFrame, and the audio ones) are NOT routed
+through this helper - they keep the escaping they always had, so scale=200:300
+and transpose=2 render byte for byte as before. What separates the two groups is
+the empty marker interface IPreEscapedFilterArgument: an argument that carries it
+has escaped its own value and the chain builder emits it verbatim; an argument
+without it gets the historical comma-only escape.
 
 
 LOCATING THE FFMPEG BINARIES - FFOptions / GlobalFFOptions
@@ -1176,6 +1312,23 @@ ENUMS AND CATALOGUE TYPES (with values)
                                  // stream specifiers :a :v :V :s :d :t
     public enum Filter         { H264_Mp4ToAnnexB, Aac_AdtstoAsc }  // bitstream
     public enum FeatureStatus  { Unknown, NotSupported, Supported }
+    public enum Lut3DInterpolation
+                               { Nearest, Trilinear, Tetrahedral, Pyramid,
+                                 Prism }   // the lut3d filter's interp option
+    public enum TonemapAlgorithm
+                               { None, Clip, Linear, Gamma, Reinhard, Hable,
+                                 Mobius }  // rendered lower-cased
+    public enum Disposition    { None, Default, Dub, Original, Comment, Lyrics,
+                                 Karaoke, Forced, HearingImpaired,
+                                 VisualImpaired, CleanEffects, AttachedPic,
+                                 Captions, Descriptions, Dependent, Metadata }
+                                 // rendered in ffmpeg's snake_case
+                                 // (hearing_impaired, attached_pic, ...);
+                                 // None renders as "0" and clears every flag
+
+  A disposition REPLACES whatever the stream had, so list every flag that should
+  stay. WithDisposition with no flags at all, or with Disposition.None among
+  them, renders "0".
 
   Channel.Both means "audio and video" for CopyArgument/DisableChannelArgument;
   in MapStreamArgument it is silently treated as Channel.All. Channel.All and
@@ -1218,16 +1371,32 @@ ENUMS AND CATALOGUE TYPES (with values)
   GetContainerFormat, so the first use launches ffmpeg to read its catalogue):
 
     public static class VideoCodec
-        Codec LibX264, LibX265, LibVpx, LibTheora, MpegTs, LibaomAv1
+        Codec LibX264, LibX265, LibVpx, LibTheora, MpegTs, LibaomAv1,
+              LibSvtAv1, LibRav1e
         public static class Image
             Codec Png, Jpg (mjpeg), Bmp, Webp
             Codec GetByExtension(string path)   // throws NotSupportedException
                                                 // for anything else
     public static class AudioCodec
-        Codec Aac, LibVorbis, LibFdk_Aac, Ac3, Eac3, LibMp3Lame
+        Codec Aac, LibVorbis, LibFdk_Aac, Ac3, Eac3, LibMp3Lame, LibOpus
         Codec Copy      // the ONE that does not consult ffmpeg
     public static class VideoType
-        ContainerFormat MpegTs, Ts, Mp4, Mov, Avi, Ogv, WebM
+        ContainerFormat MpegTs, Ts, Mp4, Mov, Avi, Ogv, WebM, Ivf, Ogg, Matroska
+
+        (VideoType is where every named ContainerFormat lives - ContainerFormat
+        itself is the catalogue object, not a constants class.)
+
+    The zscale colour-name constants (all plain strings, all in
+    CodeBrix.VideoProcessing.Enums):
+        ZScaleTransfer   Input, Linear, Bt709, Smpte170M, Bt2020Ten,
+                         Bt2020Twelve, Smpte2084, AribStdB67
+        ZScalePrimaries  Input, Bt709, Bt470Bg, Smpte170M, Bt2020, Smpte431,
+                         Smpte432
+        ZScaleMatrix     Input, Gbr, Bt709, Bt470Bg, Smpte170M, Bt2020Ncl,
+                         Bt2020Cl
+        ZScaleRange      Input, Limited, Full, Tv, Pc
+        ZScaleDither     None, Ordered, Random, ErrorDiffusion
+    Any other name the installed ffmpeg accepts can be passed as a plain string.
     public static class FileExtension
         static readonly string Mp4, Ts, Ogv, WebM     // via VideoType
         static readonly string Mp3 = ".mp3", Gif = ".gif"
@@ -1940,10 +2109,14 @@ COMMON PITFALLS TO AVOID
     startup with FFMpegHelper.VerifyFFMpegExists / FFProbeHelper.VerifyFFProbeExists,
     and remember that BinaryFolder is searched as
     {BinaryFolder}/{x64|x86}/ before {BinaryFolder}/ before PATH.
-  * Crop() does NOT go through the filter list. CropArgument renders its own
-    `-vf crop=...`, so combining `.Crop(...)` with `.WithVideoFilters(...)` puts
-    TWO `-vf` flags on one output and ffmpeg honours only the last. Do the crop
-    inside a custom filter string instead, and always eyeball `.Arguments`.
+  * ONE -vf (and one -af) per output. A second WithVideoFilters call on the same
+    output throws FFMpegArgumentException; build the whole chain in one call.
+  * Crop() does NOT go through the filter list, so the throw above does not
+    catch it. CropArgument renders its own `-vf crop=...`, so combining
+    `.Crop(...)` with `.WithVideoFilters(...)` still puts TWO `-vf` flags on one
+    output and ffmpeg honours only the last. Do the crop inside the filter chain
+    instead - `.WithVideoFilters(f => f.Custom("crop", "w:h:x:y") ...)` - and
+    always eyeball `.Arguments`.
   * WithGifPaletteArgument renders `-filter_complex`, which also conflicts with
     a `-vf` on the same output.
   * NotifyOnProgress(Action<double>, TimeSpan) needs the total duration and it
@@ -2003,6 +2176,17 @@ COMMON PITFALLS TO AVOID
     StartAndWaitForExit/StartAndWaitForExitAsync ambiguous (CS0121).
   * OutputToFile(path, overwrite: false) does not just omit `-y`: it also throws
     FFMpegException(File) at start-up when the output file already exists.
+  * -autorotate / -noautorotate is an INPUT option. AutoRotate(...) placed in an
+    OUTPUT callback renders, and ffmpeg ignores it; put it in the addArguments
+    callback of FromFileInput / AddFileInput instead.
+  * Never hand a path straight to Custom("raw filter text") - that overload
+    escapes nothing. Use Lut3D(path), or Custom(name, ("file", path)), so the
+    path gets the full filtergraph escaping. A Windows path is the classic
+    casualty: the drive colon ends the option and the backslashes disappear.
+  * zscale needs to know the colour space it is converting FROM. On a source
+    with unspecified colour metadata, or straight after a filter that hands it
+    RGB, it fails with "code 3074: no path between colorspaces" until you set
+    Matrix (or zscale's own input-side min/tin/pin through Custom).
   * Nullable reference types are DISABLED in this assembly, so the compiler will
     not warn you about the many members that can legitimately be null
     (PrimaryVideoStream, Tags, Disposition, MediaFormat fields). Null-check them.
@@ -2125,12 +2309,23 @@ QUICK REFERENCE CARD
       ForceFormat / ForcePixelFormat / WithFastStart / WithoutMetadata
       OverwriteExisting / UsingShortest / UsingThreads / UsingMultithreading
       WithHardwareAcceleration / WithBitStreamFilter / WithTagVersion
+      WithSubtitleCodec / WithEncoderParams / WithMetadata / WithStreamMetadata
+      WithDisposition / CuesToFront / ReserveIndexSpace
       WithGifPaletteArgument / WithCustomArgument / WithArgument
+
+    INPUT OPTIONS (in the addArguments callback of FromFileInput/AddFileInput)
+      AutoRotate(false) -> -noautorotate, emitted before its -i
 
     VIDEO FILTERS   f => f.Scale | Transpose | Mirror | Pad | DrawText
                          | HardBurnSubtitle | BlackDetect | BlackFrame
+                         | Custom | Fps | Lut3D | Format | ZScale | Tonemap
+                         | Rotate
+                    ONE WithVideoFilters call per output - a second throws.
+                    Custom(name, (k, v)...) and Lut3D escape their values;
+                    Custom("raw text") escapes nothing.
     AUDIO FILTERS   f => f.Pan | DynamicNormalizer | HighPass | LowPass
                          | AudioGate | SilenceDetect
+                    ONE WithAudioFilters call per output - a second throws.
 
     ONE-SHOTS
       FFMpeg.Snapshot / SnapshotAsync / GifSnapshot / GifSnapshotAsync
@@ -2158,7 +2353,8 @@ QUICK REFERENCE CARD
     ERRORS
       FFMpegException (Type, FFMpegErrorOutput) - conversions AND probes
       FFMpegStreamFormatException - a pipe frame that changed size/format
-      FFMpegArgumentException - an empty -vf / -af list
+      FFMpegArgumentException - an empty -vf / -af list, a second -vf / -af on
+                                one output, an empty ZScaleOptions
       FFOptionsException - BinaryFolder set to null
       FFProbeException - ffprobe not found; FormatNullException - no "format"
       System.IO.FileNotFoundException - missing input, at process start

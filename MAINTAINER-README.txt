@@ -222,7 +222,7 @@ and CodeBrix.AssemblyTools precedent, and NOT to be "fixed"):
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>1591</NoWarn>
 
-The ported upstream surface (roughly 165 public types and hundreds of members)
+The ported upstream surface (roughly 190 public types and hundreds of members)
 is only partially documented upstream. The XML doc file is produced so the
 package ships the upstream docs, but CS1591 is suppressed rather than inventing
 summaries for every public member. Nullable and ImplicitUsings stay OFF - they
@@ -230,9 +230,63 @@ are NOT excepted. The imaging bridge files under Imaging/ are fully documented,
 so they need no exception.
 
 
+FILTER-GRAPH ESCAPING - FilterGraphEscaper, and why the old arguments bypass it
+==============================================================================
+FFMpeg/Arguments/FilterGraphEscaper.cs is an INTERNAL static helper with exactly
+two methods. It exists because ffmpeg unescapes a filter option value TWICE
+while parsing a filtergraph: once when the "name=options" filter description is
+tokenised (terminators [ ] , ;) and once when that options string is split into
+key=value pairs (terminators : and =). Both passes drop a backslash in front of
+any character.
+
+    EscapeValue(v)              escapes \ ' : , ; [ ] =  TWICE OVER, so the
+                                value survives both passes. Applying the same
+                                one-level escape function twice is uniformly
+                                correct - over-escaping a character that only
+                                one pass cares about is harmless, because the
+                                other pass just strips the extra backslash.
+                                Verified against ffmpeg 7.1.5 with real paths
+                                containing : , ; [ ] ' = \ and spaces.
+    EscapeChainSeparators(t)    escapes , ; [ ] ONCE, leaving : = \ ' alone, so
+                                an already-formed option string keeps working.
+                                It is deliberately NOT quote-aware.
+
+WHY THE OLDER ARGUMENTS DO NOT USE IT. VideoFiltersArgument / AudioFiltersArgument
+have always rendered every value with a single `Value.Replace(",", "\\,")` and
+nothing else. Scale, Transpose, Mirror, Crop, Pad, DrawText, HardBurnSubtitle,
+BlackDetect, BlackFrame and the audio filters all depend on that: scale=200:300
+must keep its colon, drawtext builds its own quoting through StringExtensions
+.ToFFmpegLibavfilterPath, and ArgumentBuilderTest asserts their exact rendered
+text. Routing them through the new helper would change every one of those
+strings, so they are left exactly as they were.
+
+The two groups are told apart by the EMPTY marker interface
+IPreEscapedFilterArgument. The chain builders read:
+
+    var escapedValue = arg is IPreEscapedFilterArgument
+        ? arg.Value
+        : arg.Value.Replace(",", "\\,");
+
+so an argument that carries the marker has escaped its own value and is emitted
+verbatim; without the marker the historical comma-only escape still applies.
+Any NEW filter argument that owns a free-text value (a path, a caption, a user
+option string) escapes it with FilterGraphEscaper and carries the marker. A new
+filter whose value it fully controls (a number, an enum name) does not need
+either - but carrying the marker costs nothing and is clearer.
+
+THE ONE -vf PER OUTPUT GUARD. FFMpegArgumentOptions.WithVideoFilters and
+WithAudioFilters throw FFMpegArgumentException when a chain has already been
+added to the SAME options instance, because ffmpeg keeps only the last -vf / -af
+it is given and drops the others silently. The check is per options instance, so
+each output of a MultiOutput, and an input's own callback, still gets its own
+chain. It deliberately does NOT look at CropArgument or GifPaletteArgument,
+which render their own -vf / -filter_complex: catching those would change
+behaviour that existing tests pin down. That remains a documented pitfall.
+
+
 NOTES
 =====
-    * Public surface at the time of writing: about 165 public types across the
+    * Public surface at the time of writing: about 190 public types across the
       root, Arguments, Enums, Builders.MetaData, Pipes, Extend, Helpers,
       Exceptions, Imaging, Instances and Instances.Exceptions namespaces.
       AGENT-README.txt documents all of them; keep it in step when the surface

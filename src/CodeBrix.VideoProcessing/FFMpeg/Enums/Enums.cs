@@ -26,6 +26,18 @@ public static class VideoCodec
     public static Codec MpegTs => FFMpeg.GetCodec("mpegts");
     public static Codec LibaomAv1 => FFMpeg.GetCodec("libaom-av1");
 
+    /// <summary>
+    ///     The SVT-AV1 encoder, <c>libsvtav1</c>. Takes a NUMERIC <c>-preset</c> (0-13, higher is
+    ///     faster) rather than one of the x264 preset words.
+    /// </summary>
+    public static Codec LibSvtAv1 => FFMpeg.GetCodec("libsvtav1");
+
+    /// <summary>
+    ///     The rav1e AV1 encoder, <c>librav1e</c>. Takes a NUMERIC <c>-preset</c> (0-10, higher is
+    ///     faster).
+    /// </summary>
+    public static Codec LibRav1e => FFMpeg.GetCodec("librav1e");
+
     public static class Image
     {
         public static Codec Png => FFMpeg.GetCodec("png");
@@ -60,6 +72,9 @@ public static class AudioCodec
     public static Codec Ac3 => FFMpeg.GetCodec("ac3");
     public static Codec Eac3 => FFMpeg.GetCodec("eac3");
     public static Codec LibMp3Lame => FFMpeg.GetCodec("libmp3lame");
+
+    /// <summary>The Opus encoder, <c>libopus</c>. Always encodes at 48 kHz.</summary>
+    public static Codec LibOpus => FFMpeg.GetCodec("libopus");
     public static Codec Copy => new("copy", CodecType.Audio);
 }
 
@@ -72,6 +87,15 @@ public static class VideoType
     public static ContainerFormat Avi => FFMpeg.GetContainerFormat("avi");
     public static ContainerFormat Ogv => FFMpeg.GetContainerFormat("ogv");
     public static ContainerFormat WebM => FFMpeg.GetContainerFormat("webm");
+
+    /// <summary>The On2 IVF container, <c>ivf</c> - a thin frame-length wrapper around a raw video stream.</summary>
+    public static ContainerFormat Ivf => FFMpeg.GetContainerFormat("ivf");
+
+    /// <summary>The Ogg container, <c>ogg</c>.</summary>
+    public static ContainerFormat Ogg => FFMpeg.GetContainerFormat("ogg");
+
+    /// <summary>The Matroska container, <c>matroska</c>. WebM is its restricted profile.</summary>
+    public static ContainerFormat Matroska => FFMpeg.GetContainerFormat("matroska");
 }
 
 public enum Filter

@@ -31,7 +31,10 @@ public class AudioFiltersArgument : IArgument
             .Where(arg => !string.IsNullOrEmpty(arg.Value))
             .Select(arg =>
             {
-                var escapedValue = arg.Value.Replace(",", "\\,");
+                //Arguments that carry IPreEscapedFilterArgument have already applied the full
+                //filtergraph escaping rules to their own value; escaping their commas again here
+                //would turn "\," into "\\," and hand ffmpeg a stray backslash.
+                var escapedValue = arg is IPreEscapedFilterArgument ? arg.Value : arg.Value.Replace(",", "\\,");
                 return string.IsNullOrEmpty(arg.Key) ? escapedValue : $"{arg.Key}={escapedValue}";
             });
 
