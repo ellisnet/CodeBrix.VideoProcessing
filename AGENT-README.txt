@@ -26,9 +26,9 @@ The package does NOT bundle the FFmpeg binaries and does NOT P/Invoke into
 libav*. If ffmpeg is missing you get an FFMpegException ("ffmpeg was not found
 on your system"); if ffprobe is missing you get an FFProbeException.
 
-Provenance: this library is a port of FFMpegCore 5.4.0 (MIT, by Malte
-Rosenbjerg, Vlad Jerca, Max Bagryantsev), with the Instances 3.0.2 process
-wrapper (MIT) vendored directly in. Namespaces were renamed
+Provenance: this library is a port of the FFMpegCore library (MIT, by Malte
+Rosenbjerg, Vlad Jerca, Max Bagryantsev), with the Instances process wrapper
+(MIT) vendored directly in. Namespaces were renamed
 FFMpegCore.* -> CodeBrix.VideoProcessing.* and Instances[.Exceptions] ->
 CodeBrix.VideoProcessing.Instances[.Exceptions]. DO NOT write the upstream
 namespaces in code that consumes this package, and do not add a package
@@ -80,16 +80,20 @@ KEY NAMESPACES / USINGS
         // ProcessArgumentsExtensions
 
     using CodeBrix.VideoProcessing.Arguments;
-        // IArgument and every concrete ffmpeg argument type, plus
-        // VideoFilterOptions / AudioFilterOptions and the filter option
-        // builders (DrawTextOptions, PadOptions, SubtitleHardBurnOptions,
-        // StyleOptions) and the VerbosityLevel enum
+        // IArgument, IPreEscapedFilterArgument and every concrete ffmpeg
+        // argument type, plus VideoFilterOptions / AudioFilterOptions and the
+        // filter option builders (DrawTextOptions, PadOptions,
+        // SubtitleHardBurnOptions, StyleOptions, ZScaleOptions) and the
+        // VerbosityLevel enum
 
     using CodeBrix.VideoProcessing.Enums;
         // VideoCodec, AudioCodec, VideoType, Codec, CodecType, ContainerFormat,
         // PixelFormat, VideoSize, Speed, AudioQuality, FileExtension,
         // FFMpegLogLevel, Mirroring, Transposition, Channel, Filter,
-        // HardwareAccelerationDevice, FeatureStatus
+        // HardwareAccelerationDevice, FeatureStatus, Disposition,
+        // Lut3DInterpolation, TonemapAlgorithm, and the zscale constant
+        // classes ZScaleTransfer, ZScalePrimaries, ZScaleMatrix, ZScaleRange,
+        // ZScaleDither
 
     using CodeBrix.VideoProcessing.Builders.MetaData;
         // MetaDataBuilder, MetaData, ReadOnlyMetaData, IReadOnlyMetaData,
@@ -817,6 +821,11 @@ construction. On an output it renders, and ffmpeg ignores it.
 
   UsingMultithreading(true) renders `-threads {Environment.ProcessorCount}`;
   UsingMultithreading(false) renders `-threads 1`.
+  WithEncoderParams trims a leading '-' from optionName, so "svtav1-params" and
+  "-svtav1-params" both render `-svtav1-params`. The pairs are joined k=v:k=v
+  and the WHOLE parameter string is wrapped in double quotes when any part of it
+  contains whitespace. The argument object it builds exposes OptionName and
+  Parameters, so a test can read back exactly what was assembled.
   WithCustomArgument is the escape hatch for any flag this API does not model -
   it is inserted verbatim at that position in the command line, so you can pass
   several flags in one string ("-ac 2 -write_xing 0"). WithArgument is the same
@@ -875,11 +884,23 @@ reading a rendered value in a test.
     public interface IInputArgument  : IInputOutputArgument { }
     public interface IOutputArgument : IInputOutputArgument { }
     public interface IDynamicArgument { string GetText(IEnumerable<IArgument> context); }
+    public interface IPreEscapedFilterArgument { }          // empty marker
 
   IInputArgument / IOutputArgument mark an argument that owns a resource around
   the run: Pre() before the process starts, During(token) while it runs, Post()
   afterwards. IDynamicArgument lets an argument see the whole argument list when
   it renders (used to compute metadata stream indices).
+  IPreEscapedFilterArgument is an EMPTY marker carried by a filter argument that
+  has already applied the full filtergraph escaping to its own Value: the -vf /
+  -af chain builder emits such a Value verbatim, while an argument without the
+  marker gets the historical comma-only escape. Every filter argument listed
+  below as "pre-escaped" carries it.
+
+  The newer filter and option arguments VALIDATE EAGERLY in their constructors -
+  an empty name or key, a negative index, a non-finite number and a null options
+  object all throw a System.Argument* exception (ArgumentException,
+  ArgumentOutOfRangeException, ArgumentNullException) as you build the chain, not
+  when the command line renders. The individual cases are listed with each type.
 
   INPUT arguments (IInputArgument)
     InputArgument(bool verifyExists, string filePaths)
@@ -956,12 +977,77 @@ reading a rendered value in a test.
     (a blackframe filter also exists, reachable only through
      VideoFilterOptions.BlackFrame)
 
+    The filter arguments below are the newer ones. Every one of them carries the
+    empty marker IPreEscapedFilterArgument, so the chain builder emits its Value
+    verbatim instead of applying the historical comma-only escape - each type is
+    responsible for whatever escaping its own value needs, and the entry says
+    what it does.
+
+    CustomFilterArgument(string rawFilterText)
+    CustomFilterArgument(string filterName, string options)
+    CustomFilterArgument(string filterName,
+        params (string Key, string Value)[] options)
+        Also IAudioFilterArgument, so the SAME object works in an -af chain.
+        rawFilterText          Key = ""    Value = the text, nothing escaped
+        (filterName, options)  Key = name  Value = options with only , ; [ ]
+                                           escaped (: and = pass through)
+        (filterName, pairs)    Key = name  Value = "k=v:k=v" with each VALUE
+                                           escaped for both filtergraph passes
+        An empty rawFilterText or filterName -> ArgumentException; a pair with an
+        empty Key -> ArgumentException. An empty options string or an empty pair
+        array renders the bare filter name.
+        Built by VideoFilterOptions.Custom(...).
+    FpsArgument(double fps)
+    FpsArgument(string fps)                            Key = "fps"
+        Value = the number in InvariantCulture, or the escaped expression.
+        A NaN, infinite or non-positive double -> ArgumentOutOfRangeException;
+        an empty string -> ArgumentException.
+        Built by VideoFilterOptions.Fps(...).
+    FormatFilterArgument(string pixelFormat)
+    FormatFilterArgument(PixelFormat pixelFormat)      Key = "format"
+        Value = the escaped pixel-format name.
+        An empty string -> ArgumentException; a null PixelFormat ->
+        ArgumentNullException.
+        Built by VideoFilterOptions.Format(...).
+    Lut3DArgument(string cubePath,
+        Lut3DInterpolation interpolation = Lut3DInterpolation.Tetrahedral)
+        string CubePath { get; }  Lut3DInterpolation Interpolation { get; }
+        Key = "lut3d"   Value = "file={escaped path}:interp={name}"
+        An empty cubePath -> ArgumentException.
+        Built by VideoFilterOptions.Lut3D(...).
+    RotateArgument(double radians)
+    RotateArgument(string expression)                  Key = "rotate"
+        Value = the angle in InvariantCulture, or the escaped expression.
+        A NaN or infinite angle -> ArgumentOutOfRangeException; an empty
+        expression -> ArgumentException.
+        Built by VideoFilterOptions.Rotate(...).
+    TonemapArgument(TonemapAlgorithm algorithm, double? param = null,
+        double? desat = null, double? peak = null)
+        TonemapAlgorithm Algorithm { get; }            Key = "tonemap"
+        Value = "{algorithm}" plus ":param=", ":desat=", ":peak=" for whichever
+        of the three you passed, always in that order.
+        A non-finite param / desat / peak -> ArgumentOutOfRangeException.
+        Built by VideoFilterOptions.Tonemap(...).
+    ZScaleArgument(ZScaleOptions options)              Key = "zscale"
+        ZScaleOptions Options { get; }
+        Value = the options rendered in the fixed order described under "FILTER
+        OPTIONS" below. A null options object -> ArgumentNullException.
+        Built by VideoFilterOptions.ZScale(...).
+    public class ZScaleOptions        // a settable value object, not an IArgument
+        int? Width; int? Height; Size? Size; string Transfer; string Primaries;
+        string Matrix; string Range; double? Npl; string DitherMode
+        Rendering it throws FFMpegArgumentException when nothing is set, and
+        when Npl is not a finite number. Its string values are escaped for both
+        filtergraph passes. Full description under "FILTER OPTIONS" below.
+
     public class VideoFiltersArgument : IArgument
         VideoFiltersArgument(VideoFilterOptions options)
         readonly VideoFilterOptions Options;
         Text throws FFMpegArgumentException("No video-filter arguments
         provided") when the option object is empty. Commas inside a filter value
-        are escaped as "\," before the list is joined.
+        are escaped as "\," before the list is joined - unless the argument
+        carries IPreEscapedFilterArgument, whose Value is emitted verbatim
+        because it has already escaped itself.
 
   AUDIO FILTER arguments (IAudioFilterArgument: string Key, string Value;
   combined by AudioFiltersArgument into one -af "..." list)
@@ -982,11 +1068,22 @@ reading a rendered value in a test.
     SilenceDetectArgument(string noise_type = "db", double noise = 60,
         double duration = 2, bool mono = false)        Key = "silencedetect"
 
+    CustomFilterArgument(...)   the video-filter type above is ALSO an
+        IAudioFilterArgument, so it is the way to put an arbitrary filter into
+        an -af chain. AudioFilterOptions has no Custom(...) method: construct
+        the argument yourself and add it to the options object's Arguments list,
+        or build an AudioFiltersArgument around it and pass that to
+        WithArgument. See "REACHING CustomFilterArgument FROM AN -af CHAIN"
+        below.
+
     public class AudioFiltersArgument : IArgument
         AudioFiltersArgument(AudioFilterOptions options)
         readonly AudioFilterOptions Options;
         Text throws FFMpegArgumentException("No audio-filter arguments
-        provided") when the option object is empty.
+        provided") when the option object is empty. It applies exactly the same
+        escaping rule as VideoFiltersArgument: a value from an argument carrying
+        IPreEscapedFilterArgument is emitted verbatim, everything else has its
+        commas escaped as "\,".
 
   PLAIN option arguments (IArgument only - these are what the FFMpegArgumentOptions
   methods above construct; every one is public and constructible)
@@ -1031,12 +1128,56 @@ reading a rendered value in a test.
     AudibleEncryptionKeyArgument(string activationBytes)
     AudibleEncryptionKeyArgument(string key, string iv)
     CustomArgument(string argument)                            readonly string Argument
+    AutoRotateArgument(bool enabled)                           bool Enabled
+        -> -autorotate / -noautorotate                (AutoRotate(bool);
+           INPUT-side only - see the warning above)
+    CuesToFrontArgument(bool enabled)                          bool Enabled
+        -> -cues_to_front 1 / -cues_to_front 0        (CuesToFront(bool))
+    ReserveIndexSpaceArgument(int bytes)                       int Bytes
+        -> -reserve_index_space {n}                   (ReserveIndexSpace(int))
+        A negative byte count -> ArgumentOutOfRangeException.
+    NumericSpeedPresetArgument(int preset)                     int Preset
+        -> -preset {n}                                (WithSpeedPreset(int))
+        The word-based presets stay on SpeedPresetArgument; the AV1 encoders
+        take the number.
+    SubtitleCodecArgument(Codec subtitleCodec)
+    SubtitleCodecArgument(string subtitleCodec)         readonly string SubtitleCodec
+        -> -c:s {name}, lower-cased               (WithSubtitleCodec(...))
+        The Codec overload throws FFMpegException(Operation) when the codec's
+        Type is not CodecType.Subtitle.
+    EncoderParamsArgument(string optionName,
+        params (string Key, string Value)[] parameters)
+        string OptionName { get; }   string Parameters { get; }
+        -> -{name} k=v:k=v, with the parameter string wrapped in double quotes
+           when it contains whitespace; a leading '-' on optionName is trimmed
+                                                      (WithEncoderParams(...))
+        An empty optionName, a null/empty parameter array, or a parameter with
+        an empty Key -> ArgumentException.
+    SetMetadataArgument(string key, string value)
+    SetMetadataArgument(int streamIndex, string key, string value)
+    SetMetadataArgument(Channel channel, int streamIndex,
+        string key, string value)
+        -> -metadata k="v"  /  -metadata:s{:type}:{n} k="v"
+                                        (WithMetadata / WithStreamMetadata)
+        A '"' inside the value is escaped as '\"'; a null value renders as an
+        empty string. An empty key -> ArgumentException; a negative streamIndex
+        -> ArgumentOutOfRangeException.
+    DispositionArgument(int streamIndex, params Disposition[] flags)
+    DispositionArgument(Channel channel, int streamIndex,
+        params Disposition[] flags)
+        -> -disposition{:type}:{n} a+b                (WithDisposition(...))
+        No flags at all, or any flag equal to Disposition.None, renders the
+        single value "0" (clear every flag). A negative streamIndex ->
+        ArgumentOutOfRangeException.
 
   Writing your own: implement IArgument (a single `Text` property) and pass it
   to WithArgument. Implement IVideoFilterArgument / IAudioFilterArgument (Key +
-  Value) if you want it merged into an existing -vf / -af chain, and add it with
-  VideoFilterOptions.Custom(...) - or, for a filter you want to model properly,
-  construct VideoFiltersArgument yourself and pass it to WithArgument.
+  Value) if you want it merged into an existing -vf / -af chain, and add it to
+  the options object's public Arguments list inside the WithVideoFilters /
+  WithAudioFilters callback - or, for a filter you want to model properly,
+  construct VideoFiltersArgument yourself and pass it to WithArgument. (For a
+  one-off filter you do not need a type for, VideoFilterOptions.Custom(...)
+  takes the raw text or the name-and-options pairs directly.)
 
   If your own filter argument escapes its own value (see "FILTER-GRAPH ESCAPING"
   below), also implement the empty marker interface IPreEscapedFilterArgument so
@@ -1108,7 +1249,11 @@ FILTER OPTIONS - what goes inside WithVideoFilters / WithAudioFilters
         string Range     -> r        ZScaleRange.*      constants
         double? Npl      -> npl      nominal peak luminance, cd/m2
         string DitherMode-> d        ZScaleDither.*     constants
-  Rendering a ZScaleOptions with nothing set throws FFMpegArgumentException.
+  Rendering a ZScaleOptions with nothing set throws FFMpegArgumentException
+  ("At least one zscale option must be set"), and so does rendering one whose
+  Npl is not a finite number ("The zscale nominal peak luminance must be a
+  finite number"). Both throw when the command line renders, not when you set
+  the property.
   zscale needs libzimg in the ffmpeg build, and it needs to know the colour
   space it is converting FROM: on a file whose colour metadata is unspecified,
   or after a filter that hands it RGB, set Matrix (and/or reach for
@@ -1136,6 +1281,28 @@ FILTER OPTIONS - what goes inside WithVideoFilters / WithAudioFilters
             string link = "average")
         AudioFilterOptions SilenceDetect(string noise_type = "db",
             double noise = 60, double duration = 2, bool mono = false)
+
+  REACHING CustomFilterArgument FROM AN -af CHAIN. AudioFilterOptions has no
+  Custom(...) method, but CustomFilterArgument implements IAudioFilterArgument,
+  so add it to the options object's public Arguments list yourself:
+
+    using CodeBrix.VideoProcessing;
+    using CodeBrix.VideoProcessing.Arguments;
+
+    FFMpegArguments
+        .FromFileInput("in.mp4")
+        .OutputToFile("out.mp4", true, o => o
+            .WithAudioFilters(f =>
+            {
+                f.Pan(2, "c0=c0", "c1=c1");
+                f.Arguments.Add(new CustomFilterArgument("loudnorm",
+                    ("I", "-16"), ("TP", "-1.5")));
+            }))
+        .ProcessSynchronously();
+
+  The chain builder treats it like any other audio filter, and because
+  CustomFilterArgument carries IPreEscapedFilterArgument its value is emitted
+  exactly as the constructor escaped it.
 
   The three filter option builders (all created through a static Create):
 
@@ -1621,8 +1788,21 @@ EXCEPTIONS (CodeBrix.VideoProcessing.Exceptions)
     * a cancelled run           -> OperationCanceledException
     * a bad frame in a pipe     -> FFMpegStreamFormatException
     * an empty filter list      -> FFMpegArgumentException
+    * a second -vf / -af chain on one output, or a ZScaleOptions that is empty
+      or has a non-finite Npl
+                                -> FFMpegArgumentException
+    * a bad value handed to one of the newer filter / option arguments
+                                -> System.ArgumentException,
+                                   System.ArgumentOutOfRangeException or
+                                   System.ArgumentNullException, thrown by the
+                                   constructor as you BUILD the chain (an empty
+                                   filter name or metadata key, a negative
+                                   stream index or byte count, a non-positive or
+                                   non-finite number, a null options object)
   Catching FFMpegException plus OperationCanceledException plus
-  System.IO.IOException covers essentially every failure mode.
+  System.IO.IOException covers essentially every failure mode at RUN time; the
+  System.Argument* validation above fires while you are still building, so it is
+  a programming error rather than something to catch.
 
 VENDORED PROCESS LAYER (CodeBrix.VideoProcessing.Instances)
 ------------------------------------------------------------
@@ -1965,16 +2145,22 @@ COMPLETE EXAMPLES
     using CodeBrix.VideoProcessing.Arguments;
     using CodeBrix.VideoProcessing.Enums;
 
-    // a filter graph this API does not model, plus a custom IArgument
-    sealed class NoAutoRotateArgument : IArgument
+    // a filter graph this API does not model, plus a custom IArgument.
+    // -max_muxing_queue_size is a real ffmpeg OUTPUT option that this library
+    // models with no fluent method, which is exactly what IArgument is for.
+    // Do NOT hand-roll -noautorotate here: AutoRotate(bool) already ships it,
+    // and it only works on the INPUT side anyway.
+    sealed class MuxingQueueSizeArgument : IArgument
     {
-        public string Text => "-noautorotate";
+        private readonly int _packets;
+        public MuxingQueueSizeArgument(int packets) { _packets = packets; }
+        public string Text => $"-max_muxing_queue_size {_packets}";
     }
 
     string mixed = FFMpegArguments
         .FromFileInput(new[] { "a.mp3", "b.mp3" })
         .OutputToFile("mixed.mp3", true, opt => opt
-            .WithArgument(new NoAutoRotateArgument())
+            .WithArgument(new MuxingQueueSizeArgument(1024))
             .WithCustomArgument(
                 "-filter_complex \"[0:0][1:0]amix=inputs=2:duration=longest[final]\" " +
                 "-map \"[final]\"")
@@ -2257,6 +2443,22 @@ https://github.com/ellisnet/CodeBrix.VideoProcessing/tree/main/
   json loading, per-run Configure     tests/CodeBrix.VideoProcessing.Tests/
                                         FFMpegOptionsTests.cs and
                                         FFMpegArgumentProcessorTest.cs
+  The newer FFMpegArgumentOptions
+  options - subtitle codec, encoder
+  params, numeric preset, metadata
+  and stream metadata, dispositions,
+  cues_to_front, reserve_index_space,
+  autorotate                          tests/CodeBrix.VideoProcessing.Tests/
+                                        FFMpegArgumentOptionsTests.cs
+  The newer video filters - Custom,
+  Fps, Lut3D, Format, ZScale,
+  Tonemap, Rotate - their rendered
+  text, their escaping and the one
+  -vf per output guard                tests/CodeBrix.VideoProcessing.Tests/
+                                        VideoFilterOptionsTests.cs
+  A lut3d + zscale + fps + format
+  chain actually run through ffmpeg   tests/CodeBrix.VideoProcessing.Tests/
+                                        VideoFilterIntegrationTests.cs
   PixelFormat catalogue parsing       tests/CodeBrix.VideoProcessing.Tests/
                                         PixelFormatTests.cs
   The vendored process layer          tests/CodeBrix.VideoProcessing.Tests/
@@ -2326,6 +2528,8 @@ QUICK REFERENCE CARD
     AUDIO FILTERS   f => f.Pan | DynamicNormalizer | HighPass | LowPass
                          | AudioGate | SilenceDetect
                     ONE WithAudioFilters call per output - a second throws.
+                    No Custom(...) here: add a CustomFilterArgument to
+                    f.Arguments yourself - it is an IAudioFilterArgument too.
 
     ONE-SHOTS
       FFMpeg.Snapshot / SnapshotAsync / GifSnapshot / GifSnapshotAsync
@@ -2354,7 +2558,12 @@ QUICK REFERENCE CARD
       FFMpegException (Type, FFMpegErrorOutput) - conversions AND probes
       FFMpegStreamFormatException - a pipe frame that changed size/format
       FFMpegArgumentException - an empty -vf / -af list, a second -vf / -af on
-                                one output, an empty ZScaleOptions
+                                one output, an empty ZScaleOptions, a
+                                non-finite ZScaleOptions.Npl
+      System.ArgumentException / ArgumentOutOfRangeException /
+      ArgumentNullException   - the newer filter and option arguments validate
+                                eagerly in their constructors, so a bad name,
+                                key, index or number throws while you build
       FFOptionsException - BinaryFolder set to null
       FFProbeException - ffprobe not found; FormatNullException - no "format"
       System.IO.FileNotFoundException - missing input, at process start

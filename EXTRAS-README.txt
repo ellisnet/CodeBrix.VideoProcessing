@@ -19,7 +19,14 @@ Run:   dotnet test CodeBrix.VideoProcessing.slnx
        `sudo apt install ffmpeg`.
 Shows: The suite doubles as the worked-example collection for the package -
        ArgumentBuilderTest.cs asserts the exact command line every fluent call
-       renders, VideoTest.cs and AudioTest.cs exercise real conversions, pipes,
+       renders, FFMpegArgumentOptionsTests.cs does the same for the newer
+       output options (subtitle codec, encoder params, numeric preset, metadata
+       and stream metadata, dispositions, cues_to_front, reserve_index_space,
+       autorotate), VideoFilterOptionsTests.cs covers the newer video filters
+       (Custom, Fps, Lut3D, Format, ZScale, Tonemap, Rotate), their escaping
+       and the one -vf per output guard, VideoFilterIntegrationTests.cs runs a
+       lut3d + zscale + fps + format chain through a real ffmpeg,
+       VideoTest.cs and AudioTest.cs exercise real conversions, pipes,
        progress and metadata, and FFProbeTests.cs covers analysis of files,
        URIs and streams. AGENT-README.txt links these files under "WORKING
        EXAMPLES ON GITHUB".

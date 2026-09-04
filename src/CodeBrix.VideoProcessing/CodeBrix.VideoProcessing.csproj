@@ -5,12 +5,13 @@
     <AssemblyName>CodeBrix.VideoProcessing</AssemblyName>
     <RootNamespace>CodeBrix.VideoProcessing</RootNamespace>
     <!--
-      Situational exception (see AGENT-README.txt): this library is a faithful
-      port of FFMpegCore 5.4.0, whose large public surface (~150 types /
-      hundreds of members) is only partially documented upstream. The doc file
-      is generated so the shipped package carries the upstream XML docs, but
-      CS1591 is suppressed rather than inventing summaries for every member.
-      Mirrors the CodeBrix.Platform.OpenGL precedent.
+      Situational exception (see the SITUATIONAL EXCEPTION section of
+      MAINTAINER-README.txt): this library carries a large ported public
+      surface whose members are only partially documented upstream. The doc
+      file is generated so the shipped package carries those upstream XML docs,
+      but CS1591 is suppressed rather than inventing summaries for every
+      member. Mirrors the CodeBrix.Platform.OpenGL and CodeBrix.AssemblyTools
+      precedents.
     -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>1591</NoWarn>
@@ -62,7 +63,7 @@
     <Product>CodeBrix.VideoProcessing</Product>
     <Title>CodeBrix.VideoProcessing</Title>
     <Authors>Jeremy Ellis</Authors>
-    <Description>A fully managed, cross-platform FFmpeg/FFprobe wrapper for .NET that makes media analysis and conversion easy. A port of FFMpegCore with the Instances process wrapper vendored in; exposes video/audio transcoding, probing, snapshots, piping, argument building, and an in-memory image bridge (snapshots as CodeBrix.Imaging images) under the CodeBrix.VideoProcessing namespace.</Description>
+    <Description>A fully managed, cross-platform FFmpeg/FFprobe wrapper for .NET that makes media analysis and conversion easy. Exposes video and audio transcoding, muxing, probing, snapshots and animated GIFs, raw frame piping, a fluent argument builder covering codecs, filters, colour management, metadata and stream dispositions, a built-in process wrapper, and an in-memory image bridge (snapshots as CodeBrix.Imaging images) under the CodeBrix.VideoProcessing namespace.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.VideoProcessing</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ellisnet/CodeBrix.VideoProcessing</RepositoryUrl>

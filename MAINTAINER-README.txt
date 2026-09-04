@@ -74,7 +74,20 @@ REPOSITORY LAYOUT
                                            -- a tiny console helper the
                                               Instances process tests publish
                                               and drive
-    CodeBrix.VideoProcessing.slnx          -- solution
+    CodeBrix.VideoProcessing.slnx          -- solution. Its Solution Items
+                                              folder carries .gitignore,
+                                              AGENT-README.txt,
+                                              EXTRAS-README.txt, global.json,
+                                              icon-codebrix-128.png, LICENSE,
+                                              MAINTAINER-README.txt,
+                                              README-INDEX.txt, README.md and
+                                              THIRD-PARTY-NOTICES.txt; the
+                                              Tests folder carries both test
+                                              projects
+    global.json                            -- selects the
+                                              Microsoft.Testing.Platform test
+                                              runner. It does NOT pin an SDK
+                                              version. See TESTING below
     AGENT-README.txt, MAINTAINER-README.txt, EXTRAS-README.txt,
     README-INDEX.txt, README.md, LICENSE, THIRD-PARTY-NOTICES.txt,
     icon-codebrix-128.png
@@ -97,6 +110,21 @@ TESTING
 =======
     dotnet test CodeBrix.VideoProcessing.slnx
 
+THE TEST RUNNER IS Microsoft.Testing.Platform (MTP), selected by global.json at
+the repo root:
+
+    { "test": { "runner": "Microsoft.Testing.Platform" } }
+
+Because the setting lives in global.json rather than in the test csproj, it
+applies to every `dotnet test` run anywhere in the repository. The file pins no
+SDK version, so the newest installed .NET 10 SDK is still used. Keep it
+committed - without it `dotnet test` falls back to the older VSTest bridge.
+
+Test dependencies: xunit.v3, xunit.runner.visualstudio, Microsoft.NET.Test.Sdk
+and SilverAssertions.ApacheLicenseForever. coverlet.collector is deliberately
+NOT referenced any more; there is no code-coverage collection in this
+repository, so do not put it back expecting one.
+
 PREREQUISITES
     * `ffmpeg` and `ffprobe` MUST be installed and on PATH - most of the suite
       is integration tests that shell out to them. On Debian-based Linux:
@@ -111,7 +139,10 @@ PREREQUISITES
 REQUIRED SETTING - the test assembly declares, in
 tests/CodeBrix.VideoProcessing.Tests/AssemblyInfo.cs:
 
-    [assembly: CollectionBehavior(DisableTestParallelization = true)]
+    using Xunit.Sdk;   // ParallelMode
+    using Xunit.v3;    // ParallelizationAttribute
+
+    [assembly: Parallelization(Mode = ParallelMode.None)]
 
 This is MANDATORY. The integration tests spawn many ffmpeg / ffprobe / dotnet
 processes; running the test CLASSES in parallel floods the machine and looks
@@ -222,7 +253,7 @@ and CodeBrix.AssemblyTools precedent, and NOT to be "fixed"):
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>1591</NoWarn>
 
-The ported upstream surface (roughly 190 public types and hundreds of members)
+The ported upstream surface (nearly 200 public types and hundreds of members)
 is only partially documented upstream. The XML doc file is produced so the
 package ships the upstream docs, but CS1591 is suppressed rather than inventing
 summaries for every public member. Nullable and ImplicitUsings stay OFF - they
@@ -286,11 +317,13 @@ behaviour that existing tests pin down. That remains a documented pitfall.
 
 NOTES
 =====
-    * Public surface at the time of writing: about 190 public types across the
+    * Public surface at the time of writing: nearly 200 public types across the
       root, Arguments, Enums, Builders.MetaData, Pipes, Extend, Helpers,
       Exceptions, Imaging, Instances and Instances.Exceptions namespaces.
-      AGENT-README.txt documents all of them; keep it in step when the surface
-      changes.
+      AGENT-README.txt documents all of them - including the newer filter and
+      option argument types and the IPreEscapedFilterArgument marker - and its
+      IArgument catalogue is the section that goes stale first; keep it in step
+      when the surface changes.
     * src/CodeBrix.VideoProcessing/InternalsVisibleTo.cs grants internals to
       CodeBrix.VideoProcessing.Tests - the tests reach internal types such as
       MediaAnalysis and the FFMpegCache.

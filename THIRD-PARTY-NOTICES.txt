@@ -53,7 +53,37 @@ Modifications made during the port:
     System.Text.Json ships in the .NET 10 shared framework.
   - The assembly-level InternalsVisibleTo attribute now targets
     CodeBrix.VideoProcessing.Tests.
-  - No functional/behavioral source changes were made.
+  - No functional/behavioral source changes were made while porting.
+
+Changes made after the port:
+  The items below are deliberate behavioural differences from the upstream
+  FFMpegCore source, introduced in this repository after the initial port. They
+  are listed here so the attribution above is not read as a claim that the code
+  still behaves exactly like upstream.
+  - Filter-value escaping. In VideoFiltersArgument.cs and
+    AudioFiltersArgument.cs, upstream replaces every "," in a filter value with
+    "\," before joining the -vf / -af chain. That rule is kept, but it is now
+    skipped for any argument implementing the new empty marker interface
+    IPreEscapedFilterArgument: such an argument has already escaped its own
+    value with the full filtergraph rules, and its value is emitted verbatim.
+    Every filter type that existed upstream renders byte for byte as before.
+  - One filter chain per output. FFMpegArgumentOptions.WithVideoFilters and
+    WithAudioFilters now throw FFMpegArgumentException when a chain has already
+    been added to the same options instance. Upstream accepts the second call
+    and emits a second -vf / -af, which ffmpeg silently reduces to the last one.
+  - Public API added alongside the ported surface. Sixteen argument types
+    (AutoRotateArgument, CuesToFrontArgument, CustomFilterArgument,
+    DispositionArgument, EncoderParamsArgument, FormatFilterArgument,
+    FpsArgument, Lut3DArgument, NumericSpeedPresetArgument,
+    ReserveIndexSpaceArgument, RotateArgument, SetMetadataArgument,
+    SubtitleCodecArgument, TonemapArgument, ZScaleArgument and ZScaleOptions),
+    the IPreEscapedFilterArgument marker, the internal FilterGraphEscaper
+    helper, the Disposition / Lut3DInterpolation / TonemapAlgorithm enums and
+    the ZScale* constant classes, the FFMpegArgumentOptions and
+    VideoFilterOptions methods that build them, and further named codecs and
+    containers in Enums.cs (VideoCodec.LibSvtAv1, VideoCodec.LibRav1e,
+    AudioCodec.LibOpus, VideoType.Ivf, VideoType.Ogg, VideoType.Matroska).
+    Nothing present upstream was removed.
 
 Note: the file src/CodeBrix.VideoProcessing/FFMpeg/SnapshotArgumentBuilder.cs
 carries an upstream top-of-file header reading "Copyright (c) Microsoft. All
