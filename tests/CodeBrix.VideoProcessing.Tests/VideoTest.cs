@@ -847,6 +847,14 @@ public class VideoTest
             .FromPipeInput(writer)
             .OutputToPipe(reader, opt => opt
                 .WithVideoCodec("vp9")
+                // The frames arrive as rgba (see ImageVideoFrameWrapper.Format). Left to pick a
+                // format on its own, ffmpeg matches that alpha-bearing input to libvpx-vp9's gbrap,
+                // which the encoder then refuses without -strict experimental - it fails to open,
+                // ffmpeg exits, and the still-writing input pipe reports "Pipe is broken". Naming
+                // yuv420p keeps the negotiation off gbrap on every ffmpeg version and OS. The other
+                // RawVideoPipeSource tests are unaffected because libx264 and libtheora advertise no
+                // RGB-with-alpha format, so they land on yuv420p anyway.
+                .ForcePixelFormat("yuv420p")
                 .ForceFormat("webm"))
             .CancellableThrough(cancellationToken)
             .ProcessSynchronously();
@@ -876,7 +884,7 @@ public class VideoTest
         (vi.PrimaryVideoStream.Height).Should().Be(360);
     }
 
-    [Fact(Skip = "ffmpeg runtime-cancellation (graceful \"q\" quit) hangs with ffmpeg 7.1.5 on this host; ported cancellation code is byte-identical to upstream FFMpegCore and the vendored process Kill/SendInput primitives pass their own tests. Environmental - under investigation.")]
+    [Fact]
     public async Task Video_Cancel_Async()
     {
         using var outputFile = new TemporaryFile("out.mp4");
@@ -902,7 +910,7 @@ public class VideoTest
         (result).Should().BeFalse();
     }
 
-    [Fact(Skip = "ffmpeg runtime-cancellation (graceful \"q\" quit) hangs with ffmpeg 7.1.5 on this host; ported cancellation code is byte-identical to upstream FFMpegCore and the vendored process Kill/SendInput primitives pass their own tests. Environmental - under investigation.")]
+    [Fact]
     public void Video_Cancel()
     {
         using var outputFile = new TemporaryFile("out.mp4");
@@ -925,7 +933,7 @@ public class VideoTest
         (result).Should().BeFalse();
     }
 
-    [Fact(Skip = "ffmpeg runtime-cancellation (graceful \"q\" quit) hangs with ffmpeg 7.1.5 on this host; ported cancellation code is byte-identical to upstream FFMpegCore and the vendored process Kill/SendInput primitives pass their own tests. Environmental - under investigation.")]
+    [Fact]
     public async Task Video_Cancel_Async_With_Timeout()
     {
         using var outputFile = new TemporaryFile("out.mp4");
@@ -956,7 +964,7 @@ public class VideoTest
         (outputInfo.PrimaryAudioStream!.CodecName).Should().Be("aac");
     }
 
-    [Fact(Skip = "ffmpeg runtime-cancellation (graceful \"q\" quit) hangs with ffmpeg 7.1.5 on this host; ported cancellation code is byte-identical to upstream FFMpegCore and the vendored process Kill/SendInput primitives pass their own tests. Environmental - under investigation.")]
+    [Fact]
     public async Task Video_Cancel_CancellationToken_Async()
     {
         using var outputFile = new TemporaryFile("out.mp4");
@@ -981,7 +989,7 @@ public class VideoTest
         (result).Should().BeFalse();
     }
 
-    [Fact(Skip = "ffmpeg runtime-cancellation (graceful \"q\" quit) hangs with ffmpeg 7.1.5 on this host; ported cancellation code is byte-identical to upstream FFMpegCore and the vendored process Kill/SendInput primitives pass their own tests. Environmental - under investigation.")]
+    [Fact]
     public async Task Video_Cancel_CancellationToken_Async_Throws()
     {
         using var outputFile = new TemporaryFile("out.mp4");
@@ -1004,7 +1012,7 @@ public class VideoTest
         await Assert.ThrowsAsync<OperationCanceledException>(() => task);
     }
 
-    [Fact(Skip = "ffmpeg runtime-cancellation (graceful \"q\" quit) hangs with ffmpeg 7.1.5 on this host; ported cancellation code is byte-identical to upstream FFMpegCore and the vendored process Kill/SendInput primitives pass their own tests. Environmental - under investigation.")]
+    [Fact]
     public void Video_Cancel_CancellationToken_Throws()
     {
         using var outputFile = new TemporaryFile("out.mp4");
@@ -1023,8 +1031,13 @@ public class VideoTest
 
         cts.CancelAfter(300);
 
-        Assert.Throws<OperationCanceledException>(() => task.CancellableThrough(TestContext.Current.CancellationToken)
-            .ProcessSynchronously());
+        // Do NOT re-register another token here. CancellableThrough(CancellationToken) keeps
+        // exactly one registration and disposes the previous one, so a second call would
+        // silently unhook cts.Token above - nothing would then cancel ffmpeg, and because
+        // the lavfi input is infinite this test would hang forever rather than fail. That is
+        // what it used to do, and why it was marked Skip. cts.Token is the token under test,
+        // so it is the only one that may be registered.
+        Assert.Throws<OperationCanceledException>(() => task.ProcessSynchronously());
     }
 
     [Fact]
@@ -1068,7 +1081,7 @@ public class VideoTest
         Assert.Throws<OperationCanceledException>(() => task.CancellableThrough(cts.Token));
     }
 
-    [Fact(Skip = "ffmpeg runtime-cancellation (graceful \"q\" quit) hangs with ffmpeg 7.1.5 on this host; ported cancellation code is byte-identical to upstream FFMpegCore and the vendored process Kill/SendInput primitives pass their own tests. Environmental - under investigation.")]
+    [Fact]
     public async Task Video_Cancel_CancellationToken_Async_With_Timeout()
     {
         using var outputFile = new TemporaryFile("out.mp4");

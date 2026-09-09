@@ -154,13 +154,30 @@ FAST TESTS THAT DO NOT NEED FFMPEG
     Everything else is an integration test.
 
 SKIPPED TESTS
-    Seven Video_Cancel* tests in VideoTest.cs are [Fact(Skip = ...)]: on some
-    hosts / ffmpeg builds the graceful SendInput("q") quit path does not return,
-    so runtime cancellation of a running ffmpeg hangs before reaching Kill().
-    The ported cancellation code is byte-identical to upstream and the vendored
-    process Kill / SendInput primitives pass their own unit tests, so this is an
-    ffmpeg-interaction issue rather than a port defect. One FFProbeTests case is
-    skipped as consistently failing on hosted ubuntu agents.
+    One FFProbeTests case (Uri_Duration) is skipped as consistently failing on
+    hosted ubuntu agents. Nothing else in the suite is skipped.
+
+    HISTORY, because the previous note here was wrong and may still be believed:
+    seven Video_Cancel* tests in VideoTest.cs used to carry [Fact(Skip = ...)]
+    blaming "ffmpeg runtime-cancellation hangs on this host / some ffmpeg
+    builds". That diagnosis did not hold up. Run one at a time, six of the seven
+    pass; the suite-level hang came from ONE of them,
+    Video_Cancel_CancellationToken_Throws, and its cause was in the test, not in
+    ffmpeg and not in the port:
+
+        CancellableThrough(CancellationToken) keeps exactly ONE registration and
+        disposes the previous one. The test registered cts.Token, then called
+        CancellableThrough(TestContext.Current.CancellationToken) again before
+        ProcessSynchronously, which silently unhooked cts.Token. Nothing was
+        left to cancel ffmpeg, and since the lavfi input is infinite the test
+        hung forever instead of failing.
+
+    Removing that second registration fixes it, and all seven now run. Note the
+    sharp edge for anything else that touches these tests: passing a second
+    CancellationToken to the same processor REPLACES the first rather than
+    adding to it. Video_Cancel and Video_Cancel_Async call CancellableThrough
+    more than once and are fine only because they cancel through the
+    out-parameter Action, which that dispose does not affect.
 
 OS-SPECIFIC TESTS
     Utilities/OsSpecificFactAttribute.cs provides [OsSpecificFact(OsPlatforms.X)]
@@ -230,6 +247,10 @@ PROVENANCE AND VENDORED SOURCES
     * When fixing a bug that also exists upstream, prefer a change that stays
       recognisably close to the upstream code - the port's value is that it can
       be diffed against FFMpegCore.
+    * There is currently ONE deliberate behavioural divergence from upstream:
+      how FFMpegArgumentProcessor chooses between a broken pipe and ffmpeg's own
+      failure. See PIPE FAILURES VERSUS FFMPEG FAILURES below before
+      touching that code.
 
 
 CODING CONVENTIONS
@@ -313,6 +334,53 @@ each output of a MultiOutput, and an input's own callback, still gets its own
 chain. It deliberately does NOT look at CropArgument or GifPaletteArgument,
 which render their own -vf / -filter_complex: catching those would change
 behaviour that existing tests pin down. That remains a documented pitfall.
+
+
+PIPE FAILURES VERSUS FFMPEG FAILURES - why one of them is held back
+===================================================================
+DELIBERATE DIVERGENCE FROM UPSTREAM FFMpegCore, in
+FFMpeg/FFMpegArgumentProcessor.cs. Upstream Process() awaits
+
+    await Task.WhenAll(instance.WaitForExitAsync().ContinueWith(...),
+                       _ffMpegArguments.During(cancellationTokenSource.Token));
+
+and lets Task.WhenAll pick which failure surfaces. That picks wrongly whenever
+ffmpeg is the thing that failed. When ffmpeg exits early - a codec it will not
+open, a pixel format it refuses, an unwritable output - whatever is still
+writing into its pipe fails with
+
+    System.IO.IOException: Pipe is broken
+
+and THAT is what the caller sees. ffmpeg's exit code and stderr, the only
+things that say why it quit, are never reported, because HandleCompletion is
+not reached.
+
+WHAT THIS PORT DOES INSTEAD. Task.WhenAll throws only once BOTH tasks have
+settled, so the exit code is already known by the time it does. Process()
+therefore catches just that case:
+
+    catch (IOException pipeFailure) when (processResult != null && processResult.ExitCode != 0)
+
+stashes it in _pipeFailure and returns normally, so HandleCompletion raises the
+usual FFMpegException carrying ffmpeg's stderr, with the IOException as its
+InnerException.
+
+THREE THINGS THIS DELIBERATELY DOES NOT CHANGE - keep them that way:
+    * ONLY IOException is held back. An FFMpegStreamFormatException from
+      RawVideoPipeSource.CheckFrameAndThrow, or anything else a pipe source
+      throws, still propagates straight out of Process(). Four VideoTest cases
+      assert the exact type FFMpegStreamFormatException, and xUnit's
+      Assert.Throws matches the exact type.
+    * It is held back ONLY when ffmpeg actually failed (ExitCode != 0). A
+      broken pipe alongside a clean ffmpeg exit propagates as it always did.
+    * HandleCompletion rethrows a held-back failure - through
+      ExceptionDispatchInfo, so the original stack trace survives - whenever it
+      is not going to raise FFMpegException itself. That is what keeps
+      ProcessSynchronously(throwOnError: false) behaving exactly as before.
+
+Cancellation outranks both: when _cancelled is set, _pipeFailure is discarded
+and OperationCanceledException is thrown, because there the broken pipe is
+merely a side effect of the cancel.
 
 
 NOTES

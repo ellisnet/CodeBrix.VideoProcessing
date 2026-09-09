@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.ExceptionServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,6 +27,7 @@ public class FFMpegArgumentProcessor
     private Action<string> _onOutput;
     private Action<double> _onPercentageProgress;
     private Action<TimeSpan> _onTimeProgress;
+    private Exception _pipeFailure;
     private TimeSpan? _totalTimespan;
 
     internal FFMpegArgumentProcessor(FFMpegArguments ffMpegArguments)
@@ -162,6 +164,7 @@ public class FFMpegArgumentProcessor
     private async Task<IProcessResult> Process(ProcessArguments processArguments, CancellationTokenSource cancellationTokenSource)
     {
         IProcessResult processResult = null;
+        _pipeFailure = null;
         if (_cancelled)
         {
             _cancellationTokenRegistration?.Dispose();
@@ -203,15 +206,35 @@ public class FFMpegArgumentProcessor
 
         try
         {
-            await Task.WhenAll(instance.WaitForExitAsync().ContinueWith(t =>
+            var exitTask = instance.WaitForExitAsync().ContinueWith(t =>
             {
                 processResult = t.Result;
                 cancellationTokenSource.Cancel();
                 _ffMpegArguments.Post();
-            }), _ffMpegArguments.During(cancellationTokenSource.Token)).ConfigureAwait(false);
+            });
+
+            try
+            {
+                await Task.WhenAll(exitTask, _ffMpegArguments.During(cancellationTokenSource.Token)).ConfigureAwait(false);
+            }
+            catch (IOException pipeFailure) when (processResult != null && processResult.ExitCode != 0)
+            {
+                // DELIBERATE DIVERGENCE FROM UPSTREAM FFMpegCore - see PIPE FAILURES VERSUS FFMPEG
+                // FAILURES in MAINTAINER-README.txt. When ffmpeg exits early, whatever is still
+                // writing into its pipe fails with a broken-pipe IOException, and Task.WhenAll
+                // surfaces THAT instead of the exit code and stderr explaining why ffmpeg quit.
+                // WhenAll only throws once both tasks have settled, so the exit code is already
+                // known here: stash the pipe failure and let HandleCompletion report ffmpeg's own
+                // error instead, carrying this one as the inner exception. Only an incidental
+                // broken pipe is held back - an FFMpegStreamFormatException raised by a pipe
+                // source, or anything else a pipe throws, still propagates from here untouched.
+                _pipeFailure = pipeFailure;
+            }
 
             if (_cancelled)
             {
+                // Cancellation is the story, not the pipe that cancelling broke.
+                _pipeFailure = null;
                 _cancellationTokenRegistration?.Dispose();
                 throw new OperationCanceledException("ffmpeg processing was cancelled");
             }
@@ -229,8 +252,17 @@ public class FFMpegArgumentProcessor
     {
         if (throwOnError && exitCode != 0)
         {
-            throw new FFMpegException(FFMpegExceptionType.Process, $"ffmpeg exited with non-zero exit-code ({exitCode} - {string.Join("\n", errorData)})", null,
+            throw new FFMpegException(FFMpegExceptionType.Process, $"ffmpeg exited with non-zero exit-code ({exitCode} - {string.Join("\n", errorData)})", _pipeFailure,
                 string.Join("\n", errorData));
+        }
+
+        // A broken pipe that Process() held back because ffmpeg's own error looked like the
+        // better story. Reaching here means there was no better story after all, so surface
+        // it unchanged - original stack trace included - just as it would have surfaced
+        // before.
+        if (_pipeFailure != null)
+        {
+            ExceptionDispatchInfo.Capture(_pipeFailure).Throw();
         }
 
         _onPercentageProgress?.Invoke(100.0);

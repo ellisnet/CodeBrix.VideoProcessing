@@ -100,7 +100,15 @@ public class AudioTest
     [Fact]
     public void Audio_ToLibVorbis_Args_Pipe()
     {
-        using var outputFile = new TemporaryFile($"out{VideoType.Mp4.Extension}");
+        // Ogg, not MP4. Vorbis-in-MP4 is a non-standard pairing, and ffmpeg's mov/mp4 muxer
+        // rejects the packets libvorbis produces for a sample set this small ("Error submitting
+        // a packet to the muxer: Invalid data found when processing input") - the two samples
+        // below are far shorter than the encoder's 256-sample delay. The rejection is not
+        // size-monotonic, so feeding more samples is not a reliable escape; the container is.
+        // Ogg is vorbis's native container and muxes these packets on every ffmpeg version and
+        // OS. What this test covers - piping raw audio samples in and encoding them with
+        // libvorbis - is unchanged.
+        using var outputFile = new TemporaryFile($"out{VideoType.Ogg.Extension}");
 
         var samples = new List<IAudioSample> { new PcmAudioSampleWrapper([0, 0]), new PcmAudioSampleWrapper([0, 0]) };
 

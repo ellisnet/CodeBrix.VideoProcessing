@@ -215,6 +215,10 @@ executed as a child process, and its stdout/stderr are parsed. End to end:
       cleans up. A non-zero exit code throws FFMpegException with
       Type = FFMpegExceptionType.Process and the captured stderr in
       FFMpegErrorOutput, unless you pass throwOnError: false.
+      If ffmpeg exiting early also broke a pipe that was still being written
+      into, the resulting IOException ("Pipe is broken") is attached as the
+      InnerException of that FFMpegException rather than replacing it, so the
+      message you see is always ffmpeg's own explanation of what went wrong.
 
   (e) PROGRESS + LOGGING. NotifyOnProgress / NotifyOnOutput / NotifyOnError
       register callbacks. Progress is parsed out of ffmpeg's stderr with the
