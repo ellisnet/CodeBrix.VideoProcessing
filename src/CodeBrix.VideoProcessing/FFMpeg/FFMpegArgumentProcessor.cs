@@ -18,8 +18,11 @@ namespace CodeBrix.VideoProcessing; //was previously: FFMpegCore;
 public class FFMpegArgumentProcessor
 {
     private static readonly Regex ProgressRegex = new(@"time=(\d\d:\d\d:\d\d.\d\d?)", RegexOptions.Compiled);
+    private readonly List<string> _av1EncoderFallbackNotes = new();
     private readonly List<Action<FFOptions>> _configurations;
     private readonly FFMpegArguments _ffMpegArguments;
+    private bool _av1EncoderFallbackEnabled;
+    private string _av1EncoderFallbackProblem;
     private CancellationTokenRegistration? _cancellationTokenRegistration;
     private bool _cancelled;
     private FFMpegLogLevel? _logLevel;
@@ -37,6 +40,18 @@ public class FFMpegArgumentProcessor
     }
 
     public string Arguments => _ffMpegArguments.Text;
+
+    /// <summary>
+    ///     True once <see cref="FFOptions.AllowAv1EncoderFallback" /> has rewritten an output of this processor from
+    ///     <c>libsvtav1</c> to <c>libaom-av1</c>. <see cref="Arguments" /> then shows the command that actually ran.
+    /// </summary>
+    public bool Av1EncoderFallbackApplied => _av1EncoderFallbackNotes.Count > 0;
+
+    /// <summary>
+    ///     What <see cref="FFOptions.AllowAv1EncoderFallback" /> changed in this processor's command, one sentence per
+    ///     change. Empty when the fallback was not used.
+    /// </summary>
+    public IReadOnlyList<string> Av1EncoderFallbackNotes => _av1EncoderFallbackNotes.AsReadOnly();
 
     private event EventHandler<int> CancelEvent = null;
 
@@ -252,7 +267,22 @@ public class FFMpegArgumentProcessor
     {
         if (throwOnError && exitCode != 0)
         {
-            throw new FFMpegException(FFMpegExceptionType.Process, $"ffmpeg exited with non-zero exit-code ({exitCode} - {string.Join("\n", errorData)})", _pipeFailure,
+            var message = $"ffmpeg exited with non-zero exit-code ({exitCode} - {string.Join("\n", errorData)})";
+
+            // ADDITION OF THIS PORT - see AV1 ENCODER FALLBACK in MAINTAINER-README.txt. A missing encoder gets its
+            // own FFMpegException subtype, and a missing libsvtav1 gets an explanation IN FRONT OF the usual message.
+            var unknownEncoder = Av1EncoderFallback.FindUnknownEncoder(errorData);
+            if (unknownEncoder != null)
+            {
+                if (unknownEncoder == Av1EncoderFallback.SvtAv1EncoderName)
+                {
+                    message = Av1EncoderFallback.DescribeMissingSvtAv1(_av1EncoderFallbackEnabled, _av1EncoderFallbackProblem) + " " + message;
+                }
+
+                throw new FFMpegEncoderNotFoundException(unknownEncoder, message, _pipeFailure, string.Join("\n", errorData));
+            }
+
+            throw new FFMpegException(FFMpegExceptionType.Process, message, _pipeFailure,
                 string.Join("\n", errorData));
         }
 
@@ -286,10 +316,30 @@ public class FFMpegArgumentProcessor
         return options;
     }
 
+    // ADDITION OF THIS PORT - see AV1 ENCODER FALLBACK in MAINTAINER-README.txt. Runs before the arguments are
+    // rendered, so the command ffmpeg is given - and Arguments afterwards - already names libaom-av1.
+    private void ApplyAv1EncoderFallback(FFOptions ffOptions)
+    {
+        _av1EncoderFallbackEnabled = ffOptions.AllowAv1EncoderFallback;
+        _av1EncoderFallbackProblem = null;
+        if (!_av1EncoderFallbackEnabled)
+        {
+            return;
+        }
+
+        var ffmpegBinaryPath = GlobalFFOptions.GetFFMpegBinaryPath(ffOptions);
+        var outcome = Av1EncoderFallback.Apply(_ffMpegArguments.Arguments,
+            encoderName => Av1EncoderFallback.IsEncoderAvailable(ffmpegBinaryPath, encoderName, ffOptions.UseCache));
+
+        _av1EncoderFallbackNotes.AddRange(outcome.Notes);
+        _av1EncoderFallbackProblem = outcome.Problem;
+    }
+
     private ProcessArguments PrepareProcessArguments(FFOptions ffOptions)
     {
         FFMpegHelper.RootExceptionCheck();
         FFMpegHelper.VerifyFFMpegExists(ffOptions);
+        ApplyAv1EncoderFallback(ffOptions);
 
         var arguments = _ffMpegArguments.Text;
 

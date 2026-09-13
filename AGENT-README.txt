@@ -109,6 +109,7 @@ KEY NAMESPACES / USINGS
 
     using CodeBrix.VideoProcessing.Exceptions;
         // FFMpegException, FFMpegExceptionType, FFMpegStreamFormatException,
+        // FFMpegEncoderNotFoundException,
         // FFMpegArgumentException, FFOptionsException, FFProbeException,
         // FFProbeProcessException, FormatNullException
 
@@ -215,6 +216,11 @@ executed as a child process, and its stdout/stderr are parsed. End to end:
       cleans up. A non-zero exit code throws FFMpegException with
       Type = FFMpegExceptionType.Process and the captured stderr in
       FFMpegErrorOutput, unless you pass throwOnError: false.
+      When that stderr says ffmpeg does not have an encoder the command asked
+      for ("Unknown encoder '...'"), the exception is the FFMpegException
+      subclass FFMpegEncoderNotFoundException. For libsvtav1 its message starts
+      with an explanation and the FFOptions.AllowAv1EncoderFallback suggestion,
+      followed by the usual text in full - see AV1 ENCODING WITHOUT SVT-AV1.
       If ffmpeg exiting early also broke a pipe that was still being written
       into, the resulting IOException ("Pipe is broken") is attached as the
       InnerException of that FFMpegException rather than replacing it, so the
@@ -840,6 +846,9 @@ FFMpegArgumentProcessor - run and control
 ------------------------------------------
     public class FFMpegArgumentProcessor
         string Arguments { get; }         // the rendered command line
+        bool Av1EncoderFallbackApplied { get; }
+        IReadOnlyList<string> Av1EncoderFallbackNotes { get; }
+                                          // see AV1 ENCODING WITHOUT SVT-AV1
 
         bool ProcessSynchronously(bool throwOnError = true,
                                   FFOptions ffMpegOptions = null)
@@ -1417,6 +1426,8 @@ LOCATING THE FFMPEG BINARIES - FFOptions / GlobalFFOptions
         Dictionary<string, string> ExtensionOverrides { get; set; }
                                         // defaults to { "mpegts" -> ".ts" }
         bool UseCache { get; set; } = true           // cache the codec catalogue
+        bool AllowAv1EncoderFallback { get; set; } = false
+                                        // libsvtav1 missing -> use libaom-av1
         FFOptions Clone()
 
     public static class GlobalFFOptions
@@ -1437,7 +1448,8 @@ LOCATING THE FFMPEG BINARIES - FFOptions / GlobalFFOptions
   `ffmpeg.config.json` in the process's current directory if that file exists
   (deserialized straight into FFOptions - so its keys are "BinaryFolder",
   "TemporaryFilesFolder", "WorkingDirectory", "EncodingWebName", "LogLevel",
-  "ExtensionOverrides", "UseCache"); otherwise a default FFOptions is used.
+  "ExtensionOverrides", "UseCache", "AllowAv1EncoderFallback"); otherwise a
+  default FFOptions is used.
 
   Configure it in code at startup instead if you prefer:
 
@@ -1452,6 +1464,64 @@ LOCATING THE FFMPEG BINARIES - FFOptions / GlobalFFOptions
   ExtensionOverrides feeds ContainerFormat.Extension: the extension for a
   container is "." + its name unless the name has an entry in the dictionary
   (which is why VideoType.MpegTs.Extension is ".ts", not ".mpegts").
+
+AV1 ENCODING WITHOUT SVT-AV1 - FFOptions.AllowAv1EncoderFallback
+-----------------------------------------------------------------
+  Many ffmpeg builds have no SVT-AV1 encoder (libsvtav1) - the gyan.dev
+  "essentials" Windows build is a common example - while still having libaom
+  (libaom-av1). An output that asks for libsvtav1 then fails.
+
+  BY DEFAULT (AllowAv1EncoderFallback == false) the run throws
+  FFMpegEncoderNotFoundException (EncoderName == "libsvtav1"). Its Message is:
+
+      The SVT-AV1 encoder library (libsvtav1) is not present on this machine,
+      or the ffmpeg being used could not find it. To encode AV1 without
+      installing anything, opt in to the libaom-av1 fallback by setting
+      FFOptions.AllowAv1EncoderFallback = true (...), or install an ffmpeg
+      build that includes libsvtav1. ffmpeg exited with non-zero exit-code
+      (<code> - <ffmpeg's stderr>)
+
+  - i.e. the explanation, then everything the message has always said.
+  FFMpegErrorOutput is ffmpeg's stderr, as for any other failure.
+
+  OPTING IN - globally, per run, or in ffmpeg.config.json:
+
+      GlobalFFOptions.Configure(o => o.AllowAv1EncoderFallback = true);
+
+      FFMpegArguments.FromFileInput(input)
+          .OutputToFile(output, true, o => o
+              .WithVideoCodec("libsvtav1").WithSpeedPreset(8).WithConstantRateFactor(30))
+          .Configure(o => o.AllowAv1EncoderFallback = true)
+          .ProcessSynchronously();
+
+  WHAT IT DOES. Before ffmpeg starts, and only when an output selects
+  libsvtav1, the library reads `ffmpeg -encoders` (once per ffmpeg binary while
+  UseCache is on). If libsvtav1 is there, nothing changes. If it is missing and
+  libaom-av1 is there, each output that selects libsvtav1 - and only those -
+  is rewritten:
+      -c:v libsvtav1           -> -c:v libaom-av1
+      -preset N  (numeric)     -> -cpu-used N, capped at 8 (libaom's fastest)
+      -crf N                   -> kept, followed by -b:v 0 unless the output
+                                  sets a video bit rate
+      -svtav1-params ...       -> dropped (libaom-av1 does not accept them)
+  Arguments are recognised when they were added with WithVideoCodec,
+  WithSpeedPreset(int), WithConstantRateFactor, WithVideoBitrate and
+  WithEncoderParams, or with a WithCustomArgument whose whole text is that one
+  option (for example "-c:v libsvtav1" or "-preset 8"). Options buried inside a
+  longer custom string are not rewritten.
+
+  Afterwards, processor.Av1EncoderFallbackApplied is true,
+  processor.Av1EncoderFallbackNotes lists each change in a sentence, and
+  processor.Arguments shows the command that actually ran.
+
+  If the fallback is on but cannot help - the ffmpeg has no libaom-av1 either,
+  or libsvtav1 was selected in a form it does not recognise - the run still
+  throws FFMpegEncoderNotFoundException, and the explanation says the fallback
+  was enabled and why it could not be used.
+
+  libaom is far slower than SVT-AV1 and the same -crf does not give identical
+  quality, so treat the fallback as a way to keep working on a machine without
+  SVT-AV1, not as a like-for-like substitute.
 
 ENUMS AND CATALOGUE TYPES (with values)
 ----------------------------------------
@@ -1758,6 +1828,16 @@ EXCEPTIONS (CodeBrix.VideoProcessing.Exceptions)
                                     Exception innerException = null)
         Thrown by RawVideoPipeSource when a frame's Width/Height/Format differs
         from the first frame's.
+
+    public class FFMpegEncoderNotFoundException : FFMpegException
+        FFMpegEncoderNotFoundException(string encoderName, string message,
+            Exception innerException = null, string ffMpegErrorOutput = "")
+        string EncoderName { get; }           // e.g. "libsvtav1"
+        Thrown by ProcessSynchronously / ProcessAsynchronously, with
+        Type == Process, when ffmpeg's stderr says "Unknown encoder '...'".
+        The message is the usual "ffmpeg exited with non-zero exit-code (...)"
+        text; for libsvtav1 an explanation and the
+        FFOptions.AllowAv1EncoderFallback suggestion come in front of it.
 
     public class FFMpegArgumentException : Exception
         FFMpegArgumentException(string message = null, Exception innerException = null)
@@ -2377,6 +2457,12 @@ COMMON PITFALLS TO AVOID
     with unspecified colour metadata, or straight after a filter that hands it
     RGB, it fails with "code 3074: no path between colorspaces" until you set
     Matrix (or zscale's own input-side min/tin/pin through Custom).
+  * Do not assume every ffmpeg has SVT-AV1. A libsvtav1 encode on a build
+    without it throws FFMpegEncoderNotFoundException. Either install a build
+    that has it, or opt in to FFOptions.AllowAv1EncoderFallback (libaom-av1,
+    much slower) - and select the encoder with WithVideoCodec("libsvtav1") or a
+    custom argument that is exactly "-c:v libsvtav1", so the fallback can
+    recognise it.
   * Nullable reference types are DISABLED in this assembly, so the compiler will
     not warn you about the many members that can legitimately be null
     (PrimaryVideoStream, Tags, Disposition, MediaFormat fields). Null-check them.
@@ -2556,10 +2642,14 @@ QUICK REFERENCE CARD
     CONFIG
       GlobalFFOptions.Configure(new FFOptions { BinaryFolder = "..." });
       GlobalFFOptions.Configure(o => o.LogLevel = FFMpegLogLevel.Error);
+      GlobalFFOptions.Configure(o => o.AllowAv1EncoderFallback = true);
+                          // libsvtav1 missing -> encode with libaom-av1
       ffmpeg.config.json in the working directory is loaded automatically.
 
     ERRORS
       FFMpegException (Type, FFMpegErrorOutput) - conversions AND probes
+      FFMpegEncoderNotFoundException (EncoderName) - ffmpeg lacks an encoder;
+                                for libsvtav1 the message offers the fallback
       FFMpegStreamFormatException - a pipe frame that changed size/format
       FFMpegArgumentException - an empty -vf / -af list, a second -vf / -af on
                                 one output, an empty ZScaleOptions, a

@@ -67,7 +67,10 @@ REPOSITORY LAYOUT
                                               output directory
         Utilities/                         -- BitmapSource (synthetic frames on
                                               CodeBrix.Imaging),
-                                              OsSpecificFactAttribute
+                                              OsSpecificFactAttribute,
+                                              FFMpegEncoderList (reads
+                                              `ffmpeg -encoders` for
+                                              conditional skips)
         ffmpeg.config.json                 -- exercises FFOptions file loading
         AssemblyInfo.cs                    -- disables test parallelization
     tests/CodeBrix.VideoProcessing.Tests.WaitingProgram/
@@ -150,12 +153,23 @@ like a hang. Keep parallelization off.
 
 FAST TESTS THAT DO NOT NEED FFMPEG
     ArgumentBuilderTest (renders and asserts command-line strings),
-    PixelFormatTests, MetaDataBuilderTests, and most of FFMpegOptionsTests.
+    PixelFormatTests, MetaDataBuilderTests, most of FFMpegOptionsTests, and the
+    command-rewrite and message tests in Av1EncoderFallbackTests.
     Everything else is an integration test.
 
 SKIPPED TESTS
     One FFProbeTests case (Uri_Duration) is skipped as consistently failing on
-    hosted ubuntu agents. Nothing else in the suite is skipped.
+    hosted ubuntu agents. Nothing else in the suite is skipped unconditionally.
+
+    CONDITIONAL SKIPS - Av1EncoderFallbackTests. The tests that run ffmpeg
+    against a libsvtav1 request can only mean something where that ffmpeg has
+    NO libsvtav1, so they call Assert.SkipWhen(FFMpegEncoderList.Has("libsvtav1"))
+    and skip themselves wherever it is present. The fallback ones also call
+    Assert.SkipUnless(FFMpegEncoderList.Has("libaom-av1")). Expect them to RUN on
+    a build like gyan.dev's Windows "essentials", and to SKIP on the usual
+    Linux distribution and Homebrew builds, which include SVT-AV1. A skip there
+    is the test working as designed, not a problem. FFMpegEncoderList reads
+    `ffmpeg -encoders` itself, NOT through the library code under test.
 
     HISTORY, because the previous note here was wrong and may still be believed:
     seven Video_Cancel* tests in VideoTest.cs used to carry [Fact(Skip = ...)]
@@ -247,10 +261,12 @@ PROVENANCE AND VENDORED SOURCES
     * When fixing a bug that also exists upstream, prefer a change that stays
       recognisably close to the upstream code - the port's value is that it can
       be diffed against FFMpegCore.
-    * There is currently ONE deliberate behavioural divergence from upstream:
-      how FFMpegArgumentProcessor chooses between a broken pipe and ffmpeg's own
-      failure. See PIPE FAILURES VERSUS FFMPEG FAILURES below before
-      touching that code.
+    * There are currently TWO deliberate behavioural divergences from upstream,
+      both in FFMpegArgumentProcessor. One is how it chooses between a broken
+      pipe and ffmpeg's own failure - see PIPE FAILURES VERSUS FFMPEG FAILURES.
+      The other is an ADDITION: the missing-libsvtav1 explanation and the opt-in
+      libaom-av1 fallback - see AV1 ENCODER FALLBACK. Read both sections below
+      before touching that code.
 
 
 CODING CONVENTIONS
@@ -381,6 +397,79 @@ THREE THINGS THIS DELIBERATELY DOES NOT CHANGE - keep them that way:
 Cancellation outranks both: when _cancelled is set, _pipeFailure is discarded
 and OperationCanceledException is thrown, because there the broken pipe is
 merely a side effect of the cancel.
+
+
+AV1 ENCODER FALLBACK - the missing-libsvtav1 explanation and the opt-in fallback
+===============================================================================
+ADDITION OF THIS PORT - there is nothing like it in FFMpegCore. The CodeBrix
+video family authors AV1 and defaults to SVT-AV1 (libsvtav1), but plenty of
+ffmpeg builds - gyan.dev's Windows "essentials" build among them - have no
+libsvtav1 while still having libaom-av1. On such a machine every AV1 encode
+used to fail with nothing but "ffmpeg exited with non-zero exit-code (...)".
+
+THE PIECES
+    FFOptions.AllowAv1EncoderFallback   public, default false; round-trips
+                                        through ffmpeg.config.json and Clone().
+    FFMpeg/Av1EncoderFallback.cs        INTERNAL static helper: the command
+                                        rewrite (Apply), the cached
+                                        `ffmpeg -encoders` check
+                                        (IsEncoderAvailable), the stderr scan
+                                        (FindUnknownEncoder) and the message
+                                        text (DescribeMissingSvtAv1).
+    Exceptions/FFMpegEncoderNotFoundException.cs
+                                        public FFMpegException subclass,
+                                        Type == Process, plus EncoderName.
+    FFMpegArgumentProcessor             ApplyAv1EncoderFallback (called from
+                                        PrepareProcessArguments), the extra
+                                        branch in HandleCompletion, and the
+                                        public Av1EncoderFallbackApplied /
+                                        Av1EncoderFallbackNotes.
+
+THE ERROR. HandleCompletion builds the historical message exactly as before.
+If ffmpeg's stderr contains "Unknown encoder '<name>'", it throws
+FFMpegEncoderNotFoundException instead of a plain FFMpegException - still with
+the same message, inner exception (_pipeFailure) and FFMpegErrorOutput. Only
+when <name> is libsvtav1 is DescribeMissingSvtAv1(...) + " " put IN FRONT of
+the message. The prefix is the ONLY change to the text: the historical message
+follows in full, and the tests assert that it does. The prefix has two forms:
+with the fallback off it suggests turning it on; with the fallback on it says
+why the fallback could not be used.
+
+THE FALLBACK. ApplyAv1EncoderFallback runs after VerifyFFMpegExists and BEFORE
+_ffMpegArguments.Text is rendered, so the command ffmpeg receives - and
+processor.Arguments afterwards - already names libaom-av1. It does nothing
+unless the run's options have AllowAv1EncoderFallback on. Apply then:
+    * splits the ordered argument list into OUTPUT segments: the arguments
+      after the previous IInputArgument / IOutputArgument, up to the next
+      IOutputArgument. Input options (before an IInputArgument) are never
+      touched;
+    * returns without asking about encoders at all unless some output segment
+      selects libsvtav1 - so a run that never mentions it spawns no extra
+      process;
+    * asks `ffmpeg -hide_banner -encoders` (per-run binary path, cached per path
+      while UseCache is on, and a failed listing is never cached). libsvtav1
+      present -> no change. Both missing -> no change, Problem recorded for the
+      message;
+    * rewrites ONLY the segments that select libsvtav1: codec -> libaom-av1,
+      numeric preset -> -cpu-used clamped 0..8, -b:v 0 after -crf unless the
+      segment sets a video bit rate, -svtav1-params dropped. The list is
+      rewritten IN PLACE (Clear + AddRange), so Pre/During/Post and
+      IDynamicArgument still see the same argument objects for everything else.
+Typed arguments (VideoCodecArgument, NumericSpeedPresetArgument,
+ConstantRateFactorArgument, VideoBitrateArgument, EncoderParamsArgument) are
+recognised, and so is a CustomArgument whose WHOLE text is one of those options
+(the regexes are anchored). A codec buried in a longer custom string is
+deliberately not parsed out; the "fallback on" message names that case.
+
+WHY THE PRESET IS CLAMPED RATHER THAN SCALED. CodeBrix.VideoPlayback.Authoring
+already passes the SAME speed number to -cpu-used when it is asked for
+libaom-av1, so the clamp keeps the family consistent: preset 8 means 8 either
+way, and only 9..13 (which libaom has no room for) change.
+
+WHY IT IS OPT-IN. libaom is many times slower than SVT-AV1 and its rate factor
+does not land on identical quality, so silently switching could turn a
+calibrated, minutes-long job into an hour-long one with different output. A
+developer has to ask for that trade.
 
 
 NOTES

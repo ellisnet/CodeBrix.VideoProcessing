@@ -61,6 +61,27 @@ public class FFOptions : ICloneable
     /// </summary>
     public bool UseCache { get; set; } = true;
 
+    /// <summary>
+    ///     Whether an output that asks for the SVT-AV1 encoder (<c>libsvtav1</c>) may be encoded with libaom
+    ///     (<c>libaom-av1</c>) instead, when the ffmpeg being run does not have SVT-AV1. Off by default: without it,
+    ///     a missing <c>libsvtav1</c> fails the run with an <see cref="Exceptions.FFMpegEncoderNotFoundException" />
+    ///     that explains the problem and suggests turning this on.
+    ///     <para>
+    ///         When it is on, ffmpeg's encoder list is read before any run that selects <c>libsvtav1</c> (once per
+    ///         ffmpeg binary while <see cref="UseCache" /> is on). If SVT-AV1 is missing and libaom is present, the
+    ///         arguments of each output that selects <c>libsvtav1</c> are rewritten before ffmpeg starts: the codec
+    ///         becomes <c>libaom-av1</c>, a numeric <c>-preset N</c> becomes <c>-cpu-used N</c> capped at 8,
+    ///         <c>-b:v 0</c> follows <c>-crf</c> unless a video bit rate is set, and <c>-svtav1-params</c> is dropped.
+    ///         <see cref="FFMpegArgumentProcessor.Av1EncoderFallbackNotes" /> says what was changed, and
+    ///         <see cref="FFMpegArgumentProcessor.Arguments" /> shows the command that actually ran.
+    ///     </para>
+    ///     <para>
+    ///         libaom is much slower than SVT-AV1 and its rate factor does not give identical quality, so this keeps
+    ///         AV1 work going on a machine without SVT-AV1; it is not a like-for-like substitute.
+    ///     </para>
+    /// </summary>
+    public bool AllowAv1EncoderFallback { get; set; }
+
     /// <inheritdoc />
     object ICloneable.Clone()
     {
