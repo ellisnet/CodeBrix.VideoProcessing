@@ -244,8 +244,8 @@ FFMpegArgumentProcessor.CancellableThrough(...) wires cancellation:
     FFMpegArgumentProcessor CancellableThrough(out Action cancel, int timeout = 0)
     FFMpegArgumentProcessor CancellableThrough(CancellationToken token, int timeout = 0)
 
-When triggered (the returned Action is invoked, or the token is cancelled), the
-processor runs, on the cancelling thread:
+When cancellation is requested (the returned Action is invoked, or the token is
+cancelled), the processor runs, on the cancelling thread:
 
     1. instance.SendInput("q")     // ask ffmpeg to quit GRACEFULLY
     2. wait up to `timeout` milliseconds for the process to exit on its own
@@ -1363,7 +1363,7 @@ FILTER-GRAPH ESCAPING, AND THE ONE -vf PER OUTPUT RULE
 -------------------------------------------------------
 ONE CHAIN PER OUTPUT. ffmpeg accepts a single -vf per output and silently keeps
 only the LAST one it is given, so a second WithVideoFilters call on the same
-output now throws FFMpegArgumentException instead of producing a command line
+output throws FFMpegArgumentException instead of producing a command line
 that quietly drops half your filters. Build the whole chain in one call:
 
     // WRONG - throws
@@ -1408,7 +1408,7 @@ other path this library hands to ffmpeg, a path containing " is not supported.
 The older typed filters (Scale, Transpose, Mirror, Crop, Pad, DrawText,
 HardBurnSubtitle, BlackDetect, BlackFrame, and the audio ones) are NOT routed
 through this helper - they keep the escaping they always had, so scale=200:300
-and transpose=2 render byte for byte as before. What separates the two groups is
+and transpose=2 render exactly as written. What separates the two groups is
 the empty marker interface IPreEscapedFilterArgument: an argument that carries it
 has escaped its own value and the chain builder emits it verbatim; an argument
 without it gets the historical comma-only escape.
@@ -1885,7 +1885,7 @@ EXCEPTIONS (CodeBrix.VideoProcessing.Exceptions)
                                    non-finite number, a null options object)
   Catching FFMpegException plus OperationCanceledException plus
   System.IO.IOException covers essentially every failure mode at RUN time; the
-  System.Argument* validation above fires while you are still building, so it is
+  System.Argument* validation above runs while you are still building, so it is
   a programming error rather than something to catch.
 
 VENDORED PROCESS LAYER (CodeBrix.VideoProcessing.Instances)
@@ -2092,6 +2092,7 @@ COMPLETE EXAMPLES
 --------------------------------------------------------
     using System;
     using System.Drawing;
+    using CodeBrix.Imaging;                   // SaveAsPng
     using CodeBrix.VideoProcessing;
     using CodeBrix.VideoProcessing.Imaging;
 
@@ -2391,7 +2392,7 @@ COMMON PITFALLS TO AVOID
     a `-vf` on the same output.
   * NotifyOnProgress(Action<double>, TimeSpan) needs the total duration and it
     is NOT optional - probe the input first. Without it the percentage callback
-    is never invoked (only the TimeSpan overload fires).
+    is never invoked (only the TimeSpan overload is called).
   * The async FFProbe overloads take cancellationToken as the THIRD parameter,
     before customArguments. Always pass it by name.
   * Pipe frames must be consistent: every IVideoFrame handed to a
