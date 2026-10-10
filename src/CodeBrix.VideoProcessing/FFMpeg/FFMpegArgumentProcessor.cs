@@ -41,6 +41,11 @@ public class FFMpegArgumentProcessor
 
     public string Arguments => _ffMpegArguments.Text;
 
+    // CODEBRIX FIX (not in upstream FFMpegCore) - see OUTPUT PIPES DRAIN BEFORE THEY ARE DISPOSED in
+    // MAINTAINER-README.txt. How long after ffmpeg exits an output pipe's sink may take to read the rest of the
+    // pipe before the run fails with "did not drain". Internal so tests can shorten it.
+    internal TimeSpan OutputPipeDrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
     /// <summary>
     ///     True once <see cref="FFOptions.AllowAv1EncoderFallback" /> has rewritten an output of this processor from
     ///     <c>libsvtav1</c> to <c>libaom-av1</c>. <see cref="Arguments" /> then shows the command that actually ran.
@@ -190,6 +195,10 @@ public class FFMpegArgumentProcessor
 
         using var instance = processArguments.Start();
 
+        // CODEBRIX FIX - see OUTPUT PIPES DRAIN BEFORE THEY ARE DISPOSED in MAINTAINER-README.txt. Output-pipe
+        // sinks read under this token instead of cancellationTokenSource's, which ffmpeg's exit cancels.
+        using var sinkCancellationSource = new CancellationTokenSource();
+
         void OnCancelEvent(object sender, int timeout)
         {
             ExecuteIgnoringFinishedProcessExceptions(() => instance.SendInput("q"));
@@ -199,6 +208,10 @@ public class FFMpegArgumentProcessor
                 cancellationTokenSource.Cancel();
                 ExecuteIgnoringFinishedProcessExceptions(() => instance.Kill());
             }
+
+            // CODEBRIX FIX - a cancel that arrives after ffmpeg has exited, while a sink is still draining, must
+            // still stop that sink at once (the exit handler only covers cancels that came before the exit).
+            ExecuteIgnoringFinishedProcessExceptions(() => sinkCancellationSource.Cancel());
 
             static void ExecuteIgnoringFinishedProcessExceptions(Action action)
             {
@@ -221,16 +234,60 @@ public class FFMpegArgumentProcessor
 
         try
         {
+            // CODEBRIX FIX (not in upstream FFMpegCore) - see OUTPUT PIPES DRAIN BEFORE THEY ARE DISPOSED in
+            // MAINTAINER-README.txt. Upstream's exit handler was
+            //     processResult = t.Result; cancellationTokenSource.Cancel(); _ffMpegArguments.Post();
+            // which cancelled every output-pipe sink and disposed its pipe the instant ffmpeg exited. A sink slower
+            // than ffmpeg still had the pipe's buffered tail to read, lost it, and - because PipeArgument.During
+            // swallows the cancellation - nobody was told. Now the exit still cancels the During token (input pipes,
+            // and output pipes ffmpeg never connected to) and posts everything else, but a connected output pipe's
+            // sink keeps reading to EOF under sinkCancellationSource; the pipe is disposed once it has (finally,
+            // below). The wait is bounded by OutputPipeDrainTimeout, and a cancel still tears the sink down at once.
+            foreach (var outputPipe in _ffMpegArguments.OutputPipes)
+            {
+                outputPipe.SinkCancellationToken = sinkCancellationSource.Token;
+            }
+
             var exitTask = instance.WaitForExitAsync().ContinueWith(t =>
             {
                 processResult = t.Result;
                 cancellationTokenSource.Cancel();
-                _ffMpegArguments.Post();
+                if (_cancelled)
+                {
+                    // Cancelled: no draining - tear the sinks down exactly as upstream does.
+                    sinkCancellationSource.Cancel();
+                    _ffMpegArguments.PostOutputPipes();
+                }
+
+                _ffMpegArguments.PostAllExceptOutputPipes();
             });
+
+            var duringTask = _ffMpegArguments.During(cancellationTokenSource.Token);
+            var sinkDrainTimedOut = false;
+
+            async Task WaitForOutputSinksToDrainAsync()
+            {
+                await exitTask.ConfigureAwait(false);
+                try
+                {
+                    await duringTask.WaitAsync(OutputPipeDrainTimeout).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    sinkDrainTimedOut = true;
+                    sinkCancellationSource.Cancel();
+                    _ffMpegArguments.PostOutputPipes();
+                }
+            }
 
             try
             {
-                await Task.WhenAll(exitTask, _ffMpegArguments.During(cancellationTokenSource.Token)).ConfigureAwait(false);
+                await Task.WhenAll(exitTask, duringTask, WaitForOutputSinksToDrainAsync()).ConfigureAwait(false);
+            }
+            catch (Exception sinkFailure) when (sinkDrainTimedOut && !_cancelled)
+            {
+                // Whatever the abandoned sink threw on its way out is a symptom; the story is that it did not drain.
+                throw SinkDidNotDrain(sinkFailure);
             }
             catch (IOException pipeFailure) when (processResult != null && processResult.ExitCode != 0)
             {
@@ -254,12 +311,28 @@ public class FFMpegArgumentProcessor
                 throw new OperationCanceledException("ffmpeg processing was cancelled");
             }
 
+            if (sinkDrainTimedOut)
+            {
+                throw SinkDidNotDrain(null);
+            }
+
             return processResult;
         }
         finally
         {
             CancelEvent -= OnCancelEvent;
             _cancellationTokenRegistration?.Dispose();
+            // CODEBRIX FIX - the output pipes' deferred Post (see the exit handler above). Idempotent.
+            _ffMpegArguments.PostOutputPipes();
+        }
+
+        FFMpegException SinkDidNotDrain(Exception innerException)
+        {
+            return new FFMpegException(FFMpegExceptionType.Process,
+                $"An output pipe sink did not drain: ffmpeg exited (exit code {processResult?.ExitCode}) but the sink had still not read " +
+                $"everything ffmpeg wrote to the pipe {OutputPipeDrainTimeout.TotalSeconds:0.###} s later, so the piped output is incomplete.",
+                innerException,
+                string.Join("\n", processResult?.ErrorData ?? Array.Empty<string>()));
         }
     }
 

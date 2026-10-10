@@ -5,7 +5,7 @@ package
 ================================================================================
 
 This repository ships no sample applications, demos or tools. Everything that is
-not the library itself is test content. The only non-package content is the two
+not a library is test content. The only non-package content is the three
 projects under tests/ and the sample media they use.
 
 
@@ -28,8 +28,23 @@ Shows: The suite doubles as the worked-example collection for the package -
        lut3d + zscale + fps + format chain through a real ffmpeg,
        VideoTest.cs and AudioTest.cs exercise real conversions, pipes,
        progress and metadata, and FFProbeTests.cs covers analysis of files,
-       URIs and streams. AGENT-README.txt links these files under "WORKING
-       EXAMPLES ON GITHUB".
+       URIs and streams. The Engine/ folder tests the package as the
+       CodeBrix.VideoProcessing.Core engine (analysis, frame and sample
+       sources, the MP4 writer, transcode / trim / concatenate, Register).
+       AGENT-README.txt links these files under "WORKING EXAMPLES ON GITHUB".
+
+
+tests/CodeBrix.VideoProcessing.Core.Tests
+=========================================
+Path:  tests/CodeBrix.VideoProcessing.Core.Tests/
+What:  The xUnit v3 + SilverAssertions test suite for the
+       CodeBrix.VideoProcessing.Core contract package. Pure unit tests over an
+       in-memory fake engine (FakeVideoProcessor.cs); needs no ffmpeg. Not
+       packable, not published.
+Run:   dotnet test CodeBrix.VideoProcessing.slnx (runs every suite)
+Shows: ContractScenarioCoverage.cs walks the contract the way a consumer does
+       (analyse, read frames, feed a writer) and pins the ownership and
+       timestamp rules; the other files cover each contract type.
 
 
 tests/CodeBrix.VideoProcessing.Tests.WaitingProgram

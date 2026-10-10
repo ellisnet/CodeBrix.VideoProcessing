@@ -14,7 +14,19 @@ audio, extract snapshots and animated GIFs, pipe raw frames or byte streams into
 and out of FFmpeg, build FFmpeg metadata, and bridge video frames to and from
 in-memory images.
 
+It is ALSO the Windows / Linux / macOS ENGINE for CodeBrix.VideoProcessing.Core
+- the engine-neutral video processing contract (IVideoProcessor, reached through
+the VideoProcessors registry). One call at application start-up,
+CodeBrixVideoProcessing.Register(), makes this package the engine that code
+written against the Core contract uses. See "THE VIDEO PROCESSOR ENGINE" below,
+and read the Core package's own AGENT-README.txt for the contract itself.
+
 Target framework: .NET 10 or later. The assembly is 100% managed C#.
+
+NOT FOR ANDROID. There is no ffmpeg executable to launch on Android;
+CodeBrixVideoProcessing.Register() throws PlatformNotSupportedException there.
+Android applications register the CodeBrix.VideoProcessing.Android engine
+instead, and code written against the Core contract runs unchanged on both.
 
 IMPORTANT - THIS IS A WRAPPER, NOT A CODEC. At runtime it launches the external
 `ffmpeg` and `ffprobe` executables as child processes and parses their output.
@@ -50,7 +62,11 @@ you write in code is just "CodeBrix.VideoProcessing".
 License: MIT (the package incorporates MIT-licensed FFMpegCore and Instances
 source; see THIRD-PARTY-NOTICES.txt shipped in the package).
 
-NuGet dependencies (one):
+NuGet dependencies (two):
+  * CodeBrix.VideoProcessing.Core.MitLicenseForever (MIT) - the engine-neutral
+    contract this package implements (namespaces CodeBrix.VideoProcessing.Core,
+    .Core.Media, .Core.Frames, .Core.Output). Always the same version as this
+    package. Its own AGENT-README.txt documents the contract.
   * CodeBrix.Imaging.ApacheLicenseForever (Apache-2.0) - a fully managed,
     cross-platform, dependency-free CodeBrix imaging library. It is used only by
     the CodeBrix.VideoProcessing.Imaging bridge (FFMpegImage, ImageExtensions,
@@ -77,7 +93,17 @@ KEY NAMESPACES / USINGS
         // ITagsContainer, IDispositionContainer, TagExtensions,
         // DispositionExtensions, FFProbeFrames, FFProbeFrameAnalysis,
         // FFProbePackets, FFProbePacketAnalysis, MediaAnalysisUtils,
-        // ProcessArgumentsExtensions
+        // ProcessArgumentsExtensions, CodeBrixVideoProcessing (engine
+        // registration)
+
+    using CodeBrix.VideoProcessing.Engine;
+        // FFmpegVideoProcessor - this package's IVideoProcessor implementation
+
+    using CodeBrix.VideoProcessing.Core;          // from the Core dependency
+    using CodeBrix.VideoProcessing.Core.Media;
+    using CodeBrix.VideoProcessing.Core.Frames;
+    using CodeBrix.VideoProcessing.Core.Output;
+        // the engine-neutral contract - see the Core package's AGENT-README
 
     using CodeBrix.VideoProcessing.Arguments;
         // IArgument, IPreEscapedFilterArgument and every concrete ffmpeg
@@ -316,6 +342,13 @@ task while ffmpeg runs.
         Captures ffmpeg output into a Stream (or hands you the stream to read
         yourself). Set the OUTPUT container format with ForceFormat(...) in the
         output options - ffmpeg cannot infer a format from a pipe path.
+        A sink slower than ffmpeg is fine: when ffmpeg exits, the processor
+        waits for the sink to read the pipe to its end before disposing it, so
+        the sink always receives every byte. If it has still not finished 30 s
+        after ffmpeg exited, the run throws FFMpegException (Type = Process,
+        "An output pipe sink did not drain ...") rather than returning short
+        output. Cancelling the run cancels the sink's token at once. An
+        exception thrown by the sink itself propagates unchanged.
 
   Frame / sample contracts:
     public interface IVideoFrame
@@ -442,6 +475,10 @@ IMediaAnalysis is the friendly, typed view returned by Analyse/AnalyseAsync
         double AverageFrameRate;
         string ColorRange; string ColorSpace;
         string ColorTransfer; string ColorPrimaries;
+        FrameRate ExactFrameRate;     // exact rational; avg_frame_rate, else r_frame_rate
+        FrameRate RealFrameRate;      // exact r_frame_rate, no fallback
+        long? FrameCount;             // nb_frames; null when ffprobe omits it
+        double? DisplayMatrixRotation;    // raw display-matrix angle, counter-clockwise
         PixelFormat GetPixelFormatInfo();   // == FFMpeg.GetPixelFormat(PixelFormat)
     }
 
@@ -461,10 +498,24 @@ IMediaAnalysis is the friendly, typed view returned by Analyse/AnalyseAsync
         TimeSpan Duration { get; }        // End - Start
     }
 
-  On VideoStream, note that BOTH `FrameRate` (from ffprobe's r_frame_rate) and
-  `AvgFrameRate`/`AverageFrameRate` (from avg_frame_rate) are populated;
-  `Rotation` is derived from the rotate tag / display-matrix side data, and the
-  snapshot builder swaps width and height when |Rotation| is 90 or 180.
+  On VideoStream, `FrameRate` (from ffprobe's r_frame_rate) and `AvgFrameRate`
+  (from avg_frame_rate) are doubles; `AverageFrameRate` is declared but never
+  populated. When you need the EXACT rate (30000/1001, not 29.97...) use
+  `ExactFrameRate` - a CodeBrix.VideoProcessing.Core.Media.FrameRate, the reduced
+  num/den struct from the Core package - which is avg_frame_rate, or
+  r_frame_rate when avg_frame_rate is missing or "0/0"; it is
+  FrameRate.Unspecified when neither is a positive rational. `RealFrameRate` is
+  r_frame_rate alone, exactly. `FrameCount` is nb_frames, and is null when
+  ffprobe does not report one (Matroska / WebM never do) - do not read null as
+  zero frames. `Rotation` is derived from the rotate tag / display-matrix side
+  data (mixing their sign conventions), and the snapshot builder swaps width
+  and height when |Rotation| is 90 or 180; `DisplayMatrixRotation` is the
+  display matrix angle alone, counter-clockwise as ffprobe prints it (-90 =
+  shown turned 90 degrees clockwise), null when there is no display matrix.
+
+  Durations and start times (format, streams, chapters) keep ffprobe's full
+  microsecond precision, to the tick. MediaAnalysisUtils.ParseDuration reads
+  both "H:MM:SS.ffffff" and plain seconds ("3.003000").
 
 RAW ffprobe JSON MODEL (what the wire format deserializes into)
 ---------------------------------------------------------------
@@ -488,6 +539,7 @@ surface. Analyse() maps them into IMediaAnalysis internally.
         string StartTime; string Duration; string Profile;
         int? Width; int? Height; string FrameRate;   // "r_frame_rate"
         string PixelFormat; int Level; string SampleRate;
+        string NbFrames;               // "nb_frames", null when omitted
         List<Dictionary<string, JsonValue>> SideData;
         string ColorRange; string ColorSpace; string ColorTransfer;
         string ColorPrimaries;
@@ -2374,8 +2426,140 @@ PERFORMANCE TIPS
     nothing is the cheapest configuration.
 
 
+THE VIDEO PROCESSOR ENGINE (CodeBrix.VideoProcessing.Core contract)
+==================================================================
+This package implements the engine-neutral contract from
+CodeBrix.VideoProcessing.Core. Code that should run on every platform - for
+example a video authoring library - references ONLY the Core package and asks
+VideoProcessors.Current for its engine; the APPLICATION references this package
+and registers it once:
+
+    using CodeBrix.VideoProcessing;
+    using CodeBrix.VideoProcessing.Core;
+
+    CodeBrixVideoProcessing.Register();          // at start-up; idempotent
+    IVideoProcessor engine = VideoProcessors.Current;
+
+CodeBrixVideoProcessing (static, in the root namespace):
+    void Register()             adds the engine to VideoProcessors; idempotent,
+                                locked; throws PlatformNotSupportedException on
+                                Android (the message names
+                                CodeBrix.VideoProcessing.Android and
+                                CodeBrixVideoProcessingAndroid.Register()).
+                                It does not look for ffmpeg - the first
+                                operation that needs it reports its absence.
+    bool IsRegistered
+    FFmpegVideoProcessor Processor   the single registered instance
+
+FFmpegVideoProcessor (CodeBrix.VideoProcessing.Engine) : IVideoProcessor
+    new FFmpegVideoProcessor()                 uses GlobalFFOptions.Current,
+                                               read at each operation
+    new FFmpegVideoProcessor(FFOptions opts)   its own options (binary folder,
+                                               working directory, ...)
+    Name == "ffmpeg"
+    Capabilities == SupportedCapabilities == everything EXCEPT Nv12Input:
+        AlphaFrameSource | RgbaInput | HevcOutput | DirectTranscode |
+        DirectTrim | DirectConcatenate | Snapshot | I444FrameSource |
+        GrayFrameSource | HighBitDepthFrameSource
+Construct one directly only when it needs its own FFOptions; otherwise use
+Register() and VideoProcessors.Current.
+
+How each contract member is carried out:
+    Analyse / AnalyseAsync   ffprobe JSON -> MediaInfo. Frame rate is the exact
+                             rational (r_frame_rate, or avg_frame_rate when
+                             r_frame_rate is missing or above 1000 fps);
+                             FrameCount from nb_frames; HasAlpha from the pixel
+                             format (yuva*, rgba/bgra/argb/abgr, gbrap, ya*,
+                             pal8) or a WebM alpha_mode=1 tag; RotationDegrees
+                             CLOCKWISE from the display matrix (or the legacy
+                             rotate tag); colour fields mapped from ffprobe's
+                             names. Attached pictures (cover art) are not
+                             listed as video streams.
+    OpenVideo                ffmpeg decodes the FIRST video stream to raw frames
+                             on its standard output: -noautorotate (frames stay
+                             in stored orientation), an fps filter at the
+                             stream's rate (constant-rate delivery), the
+                             source's sample range kept, then the pixel format
+                             for the requested layout, depth and alpha:
+                               I420  yuv420p / yuv420p10le / yuv420p12le
+                               I444  yuv444p / yuv444p10le / yuv444p12le
+                               Gray  decoded as I420 and only Y kept, so its
+                                     luma (and range) equal I420's
+                               the yuva* variants when IncludeAlpha is set and
+                               the source has alpha (A at the frame's depth,
+                               full range); rgba (8-bit only) for RGBA.
+                             12-bit I420 WITH alpha is refused
+                             (NotSupportedException): ffmpeg has no
+                             yuva420p12le. VideoSourceOptions.BitDepth picks
+                             8 (default), 10 or 12 whatever the source has;
+                             Info.SourceBitDepth reports the source's depth
+                             (deeper sources delivered at 8 bits say
+                             IsBitDepthReduced). Alpha WebM (VP8/VP9
+                             with alpha_mode=1) is decoded with libvpx so the
+                             alpha survives. Seek restarts ffmpeg at the target
+                             frame - frame-accurate, but each Seek costs a
+                             process start, so seek sparingly.
+    OpenAudio                ffmpeg decodes the FIRST audio stream to f32le on
+                             standard output, resampled / remixed when
+                             AudioSourceOptions asks. Seek restarts ffmpeg.
+    Snapshot                 one ffmpeg run, one frame, 8-bit I420 (+ alpha plane when
+                             the source has alpha); the frame owns its memory.
+    CreateWriter             ONE ffmpeg process fed through TWO named pipes
+                             (rawvideo + f32le) writing MP4: libx264 (Mp4H264Aac)
+                             or libx265 tagged hvc1 (Mp4HevcAac) + AAC,
+                             -pix_fmt yuv420p, constant rate, -crf or -b:v from
+                             VideoQuality, -g from KeyframeIntervalFrames,
+                             -color_range / -colorspace (+ primaries and trc
+                             for BT.601 / BT.709) from the request, rotation as
+                             a display matrix (pictures untouched),
+                             +faststart when FastStart, title / creation_time
+                             tags. Input frames must be 8-bit I420 or RGBA
+                             (anything else: ArgumentException). RGBA input is
+                             converted with the request's matrix and range.
+                             Each Write* call copies into a
+                             pooled buffer; a call waits briefly when its own
+                             stream is backed up, and stops waiting when ffmpeg
+                             is evidently waiting on the other stream (so
+                             feeding sound and pictures far apart costs memory,
+                             not a deadlock).
+    TranscodeFile            one ffmpeg run. Pictures keep their stored
+                             orientation and the source's rotation metadata is
+                             carried over (a non-zero Output.RotationDegrees
+                             replaces it); Width/Height scale, FrameRate
+                             resamples with the fps filter; HasAudio keeps the
+                             first audio stream, re-encoded to AAC.
+    TrimFile                 input -ss + -t. SnapToKeyframes: -c copy (fast,
+                             lossless, starts at the keyframe at or before
+                             From). Otherwise a frame-accurate re-encode to
+                             libx264 yuv420p + AAC at the encoders' default
+                             quality. Maps the first video and first audio
+                             stream.
+    ConcatenateFiles         ffmpeg's concat DEMUXER with -c copy; input paths
+                             are made absolute (the list file lives in the
+                             temporary folder). Inputs must share codecs and
+                             parameters.
+Progress: CreateWriter reports per frame written (Fraction null); the direct
+operations report from ffmpeg's time= lines, with Fraction = time / input
+duration, ending with exactly 1.
+Errors: ffmpeg failures surface as VideoProcessingException (the
+FFMpegException is the InnerException); unreadable inputs or a missing stream as
+MediaFormatException; a missing ffmpeg executable as VideoProcessingException
+naming FFOptions.BinaryFolder. A failed or cancelled operation deletes its
+partial output.
+Encoders required at runtime: libx264 (always), libx265 (HEVC), aac (audio) -
+the usual Linux distribution, Homebrew and gyan.dev builds have all three.
+
+
 COMMON PITFALLS TO AVOID
 ========================
+  * Calling CodeBrixVideoProcessing.Register() from a LIBRARY. Registration is
+    the application's job; a library that consumes the Core contract must not
+    reference this package at all, or it forces ffmpeg onto Android apps.
+  * Calling CodeBrixVideoProcessing.Register() on Android - it throws
+    PlatformNotSupportedException by design. Register the
+    CodeBrix.VideoProcessing.Android engine there.
+  * Seeking an IVideoFrameSource from this engine for every frame. Each Seek
+    restarts ffmpeg; read forward whenever you can.
   * ffmpeg/ffprobe missing at runtime. This is the number-one failure. Verify at
     startup with FFMpegHelper.VerifyFFMpegExists / FFProbeHelper.VerifyFFProbeExists,
     and remember that BinaryFolder is searched as
@@ -2496,6 +2680,14 @@ WHAT THIS PACKAGE DOES NOT DO
     package here.
   * It is not thread-safe at the configuration level: GlobalFFOptions and the
     ffmpeg capability cache are process-wide singletons.
+  * It does not run on Android. As the Core contract's engine it covers
+    Windows, Linux and macOS; Android has its own engine package.
+  * As the Core engine it does not accept NV12 frames (no Nv12Input
+    capability) and writes only MP4 (H.264 or HEVC + AAC) from 8-bit I420 or
+    RGBA frames - I444, Gray and 10/12-bit frames are refused with an
+    ArgumentException; for any other output use the fluent FFMpegArguments
+    builder directly. It registers no encoders in the Core encoder registry
+    (VideoEncoders) - encoder packages do that.
 
 
 WORKING EXAMPLES ON GITHUB
@@ -2557,6 +2749,19 @@ https://github.com/ellisnet/CodeBrix.VideoProcessing/tree/main/
   Generating IVideoFrame sequences
   on CodeBrix.Imaging                 tests/CodeBrix.VideoProcessing.Tests/
                                         Utilities/BitmapSource.cs
+  The Core-contract engine: analyse,
+  snapshot, transcode, trim, concat,
+  registration                        tests/CodeBrix.VideoProcessing.Tests/
+                                        Engine/FFmpegVideoProcessorTests.cs
+                                        and CodeBrixVideoProcessingTests.cs
+  Frame sources - seek, alpha, RGBA,
+  10-bit, rotation; sample sources    tests/CodeBrix.VideoProcessing.Tests/
+                                        Engine/FFmpegVideoFrameSourceTests.cs
+                                        and FFmpegAudioSampleSourceTests.cs
+  The MP4 writer - round trip, fast
+  start, HEVC, RGBA, keyframes,
+  colour tags, rotation, abandonment  tests/CodeBrix.VideoProcessing.Tests/
+                                        Engine/FFmpegStandardVideoWriterTests.cs
 
 Direct link to the argument-builder tests, the best single file to read when you
 need to know exactly what a fluent call renders:
@@ -2566,7 +2771,10 @@ https://github.com/ellisnet/CodeBrix.VideoProcessing/tree/main/tests/CodeBrix.Vi
 QUICK REFERENCE CARD
 ====================
     Package .... CodeBrix.VideoProcessing.MitLicenseForever   (MIT)
-    Depends on . CodeBrix.Imaging.ApacheLicenseForever
+    Depends on . CodeBrix.VideoProcessing.Core.MitLicenseForever,
+                 CodeBrix.Imaging.ApacheLicenseForever
+    Engine ..... CodeBrixVideoProcessing.Register();  VideoProcessors.Current
+                 (not on Android)
     Needs ...... the ffmpeg and ffprobe executables at RUNTIME
     TFM ........ net10.0 or later
 

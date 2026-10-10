@@ -66,6 +66,9 @@ public class FFProbeStream : ITagsContainer, IDispositionContainer
 
     [JsonPropertyName("r_frame_rate")] public string FrameRate { get; set; } = null;
 
+    /// <summary>ffprobe's <c>nb_frames</c>: the stream's frame count as text, or null when ffprobe omits it.</summary>
+    [JsonPropertyName("nb_frames")] public string NbFrames { get; set; } = null;
+
     [JsonPropertyName("pix_fmt")] public string PixelFormat { get; set; } = null;
 
     [JsonPropertyName("level")] public int Level { get; set; }

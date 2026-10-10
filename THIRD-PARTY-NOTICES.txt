@@ -9,6 +9,10 @@ re-namespaced under CodeBrix.VideoProcessing.* and adapted to the CodeBrix
 family conventions (target .NET 10.0, nullable reference type annotations
 removed, implicit usings made explicit, file-scoped namespaces).
 
+The CodeBrix.VideoProcessing.Core package (src/CodeBrix.VideoProcessing.Core/)
+and the video processor engine in src/CodeBrix.VideoProcessing/Engine/ are
+original CodeBrix code; they incorporate no third-party source.
+
 Both incorporated projects are licensed under the MIT License, which is
 compatible with this project's MIT License. The full text of each upstream
 license is reproduced below, as required by the MIT License.

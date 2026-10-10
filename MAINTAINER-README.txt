@@ -11,7 +11,7 @@ repository itself.
 
 PURPOSE AND SCOPE
 =================
-This repository produces exactly ONE NuGet package.
+This repository produces TWO NuGet packages.
 
     Package id ........ CodeBrix.VideoProcessing.MitLicenseForever
     Project ........... src/CodeBrix.VideoProcessing/CodeBrix.VideoProcessing.csproj
@@ -19,14 +19,80 @@ This repository produces exactly ONE NuGet package.
     Consumer doc ...... AGENT-README.txt (repo root) - shipped inside the nupkg
     License ........... MIT
 
-The library is a fully managed, cross-platform FFmpeg / FFprobe wrapper. It
-launches the external `ffmpeg` and `ffprobe` executables and parses their
-output; it contains no native code and no P/Invoke.
+    Package id ........ CodeBrix.VideoProcessing.Core.MitLicenseForever
+    Project ........... src/CodeBrix.VideoProcessing.Core/CodeBrix.VideoProcessing.Core.csproj
+    Assembly / root ns  CodeBrix.VideoProcessing.Core
+    Consumer doc ...... src/CodeBrix.VideoProcessing.Core/AGENT-README.txt -
+                        shipped inside that nupkg as AGENT-README.txt
+    License ........... MIT
+
+The root AGENT-README.txt is the CodeBrix.VideoProcessing package's file, NOT a
+repository-wide one. README-INDEX.txt maps the two.
+
+CodeBrix.VideoProcessing is a fully managed, cross-platform FFmpeg / FFprobe
+wrapper. It launches the external `ffmpeg` and `ffprobe` executables and parses
+their output; it contains no native code and no P/Invoke. It is ALSO the
+desktop (Windows / Linux / macOS) ENGINE for the Core contract - see THE CORE
+CONTRACT AND THE FFMPEG ENGINE below.
+
+CodeBrix.VideoProcessing.Core is the engine-neutral contract (VideoProcessors
+registry, IVideoProcessor, media description, frame / sample sources, the
+standard MP4 writer, transcode / trim / concatenate requests), plus the
+ENCODER SEAM (Encoding/: the VideoEncoders registry, IVideoEncoderFactory,
+IVideoEncoder, VideoEncoderRequest, EncodedVideoPacket). It has ZERO
+package dependencies - keep it that way: no CodeBrix.Imaging, nothing. It must
+not know anything about the CodeBrixVideo formats (CBVF, WebM authoring); those
+belong to the libraries that CONSUME the contract.
+
+Project reference graph inside the repository:
+
+    CodeBrix.VideoProcessing  --ProjectReference-->  CodeBrix.VideoProcessing.Core
+
+The ProjectReference packs as a package DEPENDENCY (not a bundled assembly).
+Both projects carry the SAME date-stamped version block, so one build/pack run
+stamps both with one version and the dependency is declared at that same
+version. A third package, CodeBrix.VideoProcessing.Android (the Android
+engine), is planned for this repository and will follow the same pattern.
 
 
 REPOSITORY LAYOUT
 =================
-    src/CodeBrix.VideoProcessing/          -- the one and only library / package
+    src/CodeBrix.VideoProcessing.Core/     -- the contract package
+        (root)                             -- VideoProcessors, IVideoProcessor,
+                                              VideoProcessorCapabilities,
+                                              VideoProcessorExtensions,
+                                              VideoProgress and the three
+                                              exceptions
+        Media/                             -- MediaInfo, Video/AudioStreamInfo,
+                                              FrameRate, colour / chroma enums
+        Frames/                            -- VideoFrameData, VideoPlane,
+                                              VideoPixelLayout, frame and sample
+                                              sources, their options and infos
+        Output/                            -- StandardVideoRequest,
+                                              IStandardVideoWriter, VideoQuality,
+                                              profiles, Transcode / Trim /
+                                              Concatenate requests
+        Encoding/                          -- the encoder seam: VideoEncoders
+                                              (registry), VideoCodecIds,
+                                              IVideoEncoderFactory,
+                                              IVideoEncoder,
+                                              VideoEncoderRequest,
+                                              VideoEncoderCapabilities (+ the
+                                              layout / depth flag enums),
+                                              EncodedVideoPacket and the two
+                                              encoder exceptions
+        AGENT-README.txt                   -- that package's consumer doc
+        InternalsVisibleTo.cs              -- grants internals to
+                                              CodeBrix.VideoProcessing.Core.Tests
+    tests/CodeBrix.VideoProcessing.Core.Tests/
+                                           -- xUnit v3 + SilverAssertions; pure
+                                              unit tests over a fake in-memory
+                                              engine (FakeVideoProcessor.cs) and
+                                              a fake encoder
+                                              (FakeVideoEncoderFactory.cs,
+                                              FakeVideoEncoder.cs) - no ffmpeg
+                                              needed
+    src/CodeBrix.VideoProcessing/          -- the FFmpeg wrapper library / package
         FFMpeg/                            -- FFMpeg, FFMpegArguments,
                                               FFMpegArgumentOptions,
                                               FFMpegArgumentProcessor,
@@ -57,6 +123,17 @@ REPOSITORY LAYOUT
         Imaging/                           -- FFMpegImage, ImageExtensions,
                                               ImageVideoFrameWrapper
                                               (the CodeBrix.Imaging bridge)
+        Engine/                            -- the Core-contract engine (original
+                                              CodeBrix code): FFmpegVideoProcessor
+                                              (public) and its internals -
+                                              FFmpegProbe, FFmpegNames,
+                                              FFmpegToolProcess,
+                                              FFmpegVideoFrameSource,
+                                              FFmpegAudioSampleSource,
+                                              FFmpegStandardVideoWriter,
+                                              QueuedPipeSource,
+                                              FFmpegOutputOptions
+        CodeBrixVideoProcessing.cs         -- the engine's Register() class
         Instances/                         -- the vendored process wrapper
         Instances/Exceptions/
         FFOptions.cs, GlobalFFOptions.cs, FFMetadataInputArgument.cs
@@ -65,6 +142,10 @@ REPOSITORY LAYOUT
     tests/CodeBrix.VideoProcessing.Tests/  -- xUnit v3 + SilverAssertions
         Resources/                         -- sample media copied to the test
                                               output directory
+        Engine/                            -- the engine tests, plus
+                                              EngineTestMedia (synthetic fixtures
+                                              made with the host ffmpeg, and
+                                              ffprobe / MP4-box inspection)
         Utilities/                         -- BitmapSource (synthetic frames on
                                               CodeBrix.Imaging),
                                               OsSpecificFactAttribute,
@@ -85,8 +166,8 @@ REPOSITORY LAYOUT
                                               MAINTAINER-README.txt,
                                               README-INDEX.txt, README.md and
                                               THIRD-PARTY-NOTICES.txt; the
-                                              Tests folder carries both test
-                                              projects
+                                              Tests folder carries all three
+                                              test projects
     global.json                            -- selects the
                                               Microsoft.Testing.Platform test
                                               runner. It does NOT pin an SDK
@@ -101,12 +182,13 @@ BUILDING
     dotnet restore CodeBrix.VideoProcessing.slnx
     dotnet build   CodeBrix.VideoProcessing.slnx
 
-Target framework: net10.0 only. No multi-targeting. The library has one package
-reference (CodeBrix.Imaging.ApacheLicenseForever); everything else comes from
-the shared framework.
+Target framework: net10.0 only. No multi-targeting. CodeBrix.VideoProcessing
+has one package reference (CodeBrix.Imaging.ApacheLicenseForever) and one
+project reference (CodeBrix.VideoProcessing.Core); the Core has none at all;
+everything else comes from the shared framework.
 
-The library csproj sets GeneratePackageOnBuild=true, so an ordinary Debug build
-also produces a .nupkg (see PACKAGING below).
+Both library csprojs set GeneratePackageOnBuild=true, so an ordinary Debug
+build also produces both .nupkg files (see PACKAGING below).
 
 
 TESTING
@@ -152,7 +234,13 @@ processes; running the test CLASSES in parallel floods the machine and looks
 like a hang. Keep parallelization off.
 
 FAST TESTS THAT DO NOT NEED FFMPEG
-    ArgumentBuilderTest (renders and asserts command-line strings),
+    The WHOLE of CodeBrix.VideoProcessing.Core.Tests (it tests the contract
+    through FakeVideoProcessor, an in-memory engine). Every test that touches
+    the process-wide VideoProcessors registry lives in VideoProcessorsTests,
+    which clears the registry before and after each test through the internal
+    Clear(); keep registry tests in that one class so no other class can see a
+    half-built registry.
+    In CodeBrix.VideoProcessing.Tests: ArgumentBuilderTest (renders and asserts command-line strings),
     PixelFormatTests, MetaDataBuilderTests, most of FFMpegOptionsTests, and the
     command-rewrite and message tests in Av1EncoderFallbackTests.
     Everything else is an integration test.
@@ -201,17 +289,27 @@ OS-SPECIFIC TESTS
 
 PACKAGING AND PUBLISHING
 ========================
-There is no separate pack driver. The library csproj sets
-GeneratePackageOnBuild=true, so `dotnet build` (or `dotnet pack`) on
-src/CodeBrix.VideoProcessing produces CodeBrix.VideoProcessing.MitLicenseForever
-.nupkg.
+There is no separate pack driver. Both library csprojs set
+GeneratePackageOnBuild=true, so `dotnet build` (or `dotnet pack`) of the slnx
+produces CodeBrix.VideoProcessing.MitLicenseForever.<v>.nupkg and
+CodeBrix.VideoProcessing.Core.MitLicenseForever.<v>.nupkg. The
+CodeBrix.VideoProcessing nuspec declares a dependency on
+CodeBrix.VideoProcessing.Core.MitLicenseForever at the Core package's version
+from the same run. PUBLISH BOTH TOGETHER - a VideoProcessing package whose Core
+dependency was never pushed cannot be restored.
 
-WHAT SHIPS IN THE NUPKG (the <None ... Pack="true"> items in the csproj):
+WHAT SHIPS IN THE CodeBrix.VideoProcessing NUPKG:
     icon-codebrix-128.png     (PackageIcon)
     README.md                 (PackageReadmeFile)
-    AGENT-README.txt          (the consumer documentation)
+    AGENT-README.txt          (the root consumer documentation)
     THIRD-PARTY-NOTICES.txt   (upstream attribution and license texts)
     the generated XML documentation file
+
+WHAT SHIPS IN THE CodeBrix.VideoProcessing.Core NUPKG:
+    icon-codebrix-128.png, README.md (the shared root README), LICENSE,
+    THIRD-PARTY-NOTICES.txt, the generated XML documentation file, and
+    src/CodeBrix.VideoProcessing.Core/AGENT-README.txt packed at the package
+    root as AGENT-README.txt.
 
 MAINTAINER-README.txt, EXTRAS-README.txt and README-INDEX.txt are repository
 files and are deliberately NOT packed.
@@ -261,12 +359,14 @@ PROVENANCE AND VENDORED SOURCES
     * When fixing a bug that also exists upstream, prefer a change that stays
       recognisably close to the upstream code - the port's value is that it can
       be diffed against FFMpegCore.
-    * There are currently TWO deliberate behavioural divergences from upstream,
-      both in FFMpegArgumentProcessor. One is how it chooses between a broken
-      pipe and ffmpeg's own failure - see PIPE FAILURES VERSUS FFMPEG FAILURES.
-      The other is an ADDITION: the missing-libsvtav1 explanation and the opt-in
-      libaom-av1 fallback - see AV1 ENCODER FALLBACK. Read both sections below
-      before touching that code.
+    * There are currently THREE deliberate behavioural divergences from
+      upstream, all in FFMpegArgumentProcessor. One is how it chooses between a
+      broken pipe and ffmpeg's own failure - see PIPE FAILURES VERSUS FFMPEG
+      FAILURES. One is a CodeBrix bug fix: output pipes are read to EOF before
+      they are disposed - see OUTPUT PIPES DRAIN BEFORE THEY ARE DISPOSED. The
+      third is an ADDITION: the missing-libsvtav1 explanation and the opt-in
+      libaom-av1 fallback - see AV1 ENCODER FALLBACK. Read all three sections
+      below before touching that code.
 
 
 CODING CONVENTIONS
@@ -284,6 +384,10 @@ CODING CONVENTIONS
     * No project-level warning suppression beyond the one documented exception
       below.
 
+THE CORE PROJECT HAS NO EXCEPTIONS AT ALL: GenerateDocumentationFile is on, there
+is NO NoWarn, and every public member carries an XML doc comment. Keep it that
+way when the contract grows.
+
 SITUATIONAL EXCEPTION (main library csproj only; the CodeBrix.Platform.OpenGL
 and CodeBrix.AssemblyTools precedent, and NOT to be "fixed"):
 
@@ -296,6 +400,124 @@ package ships the upstream docs, but CS1591 is suppressed rather than inventing
 summaries for every public member. Nullable and ImplicitUsings stay OFF - they
 are NOT excepted. The imaging bridge files under Imaging/ are fully documented,
 so they need no exception.
+
+
+THE CORE CONTRACT AND THE FFMPEG ENGINE
+=======================================
+CodeBrix.VideoProcessing implements CodeBrix.VideoProcessing.Core's
+IVideoProcessor as Engine/FFmpegVideoProcessor, registered by
+CodeBrixVideoProcessing.Register() (idempotent, locked; throws
+PlatformNotSupportedException on Android, pointing at the Android engine). The
+engine is ORIGINAL CodeBrix code layered on the port - it has no upstream and
+no `//was previously:` comments. It is written to the Core project's standard:
+every public member documented even though this csproj carries the NoWarn 1591
+exception.
+
+DESIGN DECISIONS - read before changing the engine:
+    * READERS USE STDOUT, NOT OutputToPipe. The frame source, sample source,
+      and Snapshot run ffmpeg through FFmpegToolProcess
+      (System.Diagnostics.Process, ArgumentList, binary stdout). The ported
+      OutputPipeArgument path is NOT safe for a pull reader: when ffmpeg exits,
+      FFMpegArgumentProcessor's exit continuation calls Post(), which disposes
+      the server pipe while the reader may still have unread data in it. A
+      deliberately slow StreamPipeSink reading a raw decode of
+      input_3sec.webm received 31,053,312 of 31,104,000 bytes and no error.
+      Reading stdout has no such race. (The ported race is left as it is -
+      see the found-along-the-way list in the session report.)
+    * ONE PROBE PATH. The engine's Analyse (FFmpegProbe) calls
+      FFProbe.AnalyseAsync and maps the friendly IMediaAnalysis model onto
+      MediaInfo; it never parses ffprobe JSON itself. The exact values the
+      contract needs live on the friendly model: VideoStream.RealFrameRate and
+      ExactFrameRate (Core FrameRate rationals - the engine prefers the real
+      rate unless it is above 1000 fps), FrameCount (nb_frames),
+      DisplayMatrixRotation, and tick-precise durations. If the engine ever
+      needs another ffprobe field, add it to FFProbeStream and the friendly
+      model - do not start a second parser. FFProbe exceptions are translated
+      to Core ones (FormatNullException / non-zero exit / bad JSON ->
+      MediaFormatException; ffprobe not runnable -> VideoProcessingException).
+    * THE WRITER USES THE PORT'S PIPE MACHINERY: one ffmpeg, two
+      InputPipeArguments (via FFMpegArguments.FromPipeInput / AddPipeInput),
+      each fed by a QueuedPipeSource (an IPipeSource over an unbounded
+      Channel of pooled buffers). Input pipes do not have the reader race:
+      finishing the queue lets PipeArgument.During disconnect, which is EOF to
+      ffmpeg.
+    * WRITER BACK-PRESSURE (FFmpegStandardVideoWriter.WaitForRoom): a Write
+      call waits while its own stream has a backlog (8 frames / about one
+      second of audio chunks), BUT stops waiting once the other stream's queue
+      is empty and its own has not moved for 100 ms - ffmpeg is then waiting for
+      the other stream (its scheduler, and x265's look-ahead, can want audio
+      well ahead of video). A hard 10 s without progress also ends the wait.
+      The first version waited whenever the other stream had "caught up" in
+      media time; with HEVC + audio that stalled every frame for its 5 s
+      timeout (one test run took 13 minutes). Do not reintroduce a rule that
+      can hold one stream while ffmpeg starves on the other.
+    * FRAME-ACCURATE SEEK: the frame source restarts ffmpeg with input -ss a
+      QUARTER FRAME before the target frame's grid time, plus an fps filter at
+      the stream's rate. The target frame is then the first to survive
+      ffmpeg's accurate seek; Seek_lands_on_the_same_picture_as_reading_
+      sequentially pins this byte-for-byte.
+    * ROTATION: frames are decoded with -noautorotate; the writer and
+      TranscodeFile write a clockwise request as -display_rotation:v:0 with
+      the NEGATED angle (ffmpeg's display matrix angle is counter-clockwise).
+      ffmpeg 7.x ignores the legacy `-metadata:s:v rotate=`; do not use it.
+    * Alpha WebM: ffmpeg's native VP8/VP9 decoders drop the alpha side
+      channel; the frame source selects libvpx / libvpx-vp9 when alpha is
+      requested from a stream tagged alpha_mode=1.
+    * SOURCE PIXEL FORMATS (FFmpegVideoFrameSource.ChoosePixelFormat): the
+      raw output format is picked so its planes ARE the contract's planes -
+      yuv420p / yuv444p and their 10le / 12le and yuva* variants (ffmpeg's
+      "le" formats already store deep samples little-endian in the low bits).
+      GRAY IS DECODED AS yuv420p* AND ONLY Y IS KEPT: ffmpeg's own gray /
+      gray10le / gray12le formats are full range, so a limited-range source
+      came out stretched (verified: luma differed from I420's in 892,398 of
+      921,600 samples). Gray with alpha goes through yuva420p* (yuva444p12le at
+      12 bits). 12-bit I420 WITH alpha is refused (NotSupportedException):
+      ffmpeg has no yuva420p12le, and down-sampling 4:4:4 chroma ourselves
+      would be a guess. The standard writer takes 8-bit I420 / RGBA only and
+      throws ArgumentException for anything else (I444 / Gray already fail
+      StandardVideoRequest.Validate).
+
+ENGINE TESTS (tests/CodeBrix.VideoProcessing.Tests/Engine/) need ffmpeg with
+libx264, libx265, aac and ffv1 (the alpha fixture is a lossless FFV1 clip
+generated at test time). They take well under a minute.
+
+
+ENCODER PACKAGES - how they plug into the Core
+==============================================
+Standalone encoders (the first is CodeBrix.VideoEncoding.Av1, in its own
+repository) depend on the published CodeBrix.VideoProcessing.Core package -
+never a ProjectReference across repositories - and plug in through
+CodeBrix.VideoProcessing.Core.Encoding:
+
+    * The package implements IVideoEncoderFactory (one shared, thread-safe
+      instance per codec id from VideoCodecIds) and IVideoEncoder, and offers
+      a static class named after the package (CodeBrixVideoEncodingAv1) whose
+      idempotent, locked Register() calls VideoEncoders.Register(factory).
+    * VideoEncoders mirrors VideoProcessors: a locked List, idempotent on the
+      instance, internal Unregister / Clear for the tests. Lookups are by codec
+      id (ignoring case) and the most recent registration for an id wins. The
+      codec id is read ONCE at registration.
+    * Create validates the request (VideoEncoderRequest.Validate), refuses
+      what Capabilities lacks (VideoEncoderCapabilities.ThrowIfUnsupported)
+      and keeps request.Clone(). Codec knobs travel in
+      VideoEncoderRequest.CodecOptions (string -> string) and Speed is
+      codec-specific - the Core never enumerates any codec's options. Add a
+      typed property to VideoEncoderRequest only when it means the same thing
+      for every codec.
+    * Packets are numbered by submission (the Nth Encode is frame N, stamped
+      FrameRate.TimestampOf(N)), are fresh buffers, and come out through the
+      TryReadPacket pull loop; CodecConfigurationRecord (av1C / avcC / hvcC) is
+      set no later than the first packet.
+    * The encoder contract knows nothing about containers, alpha streams,
+      RGBA conversion or CodeBrixVideo formats; an alpha channel is a second
+      Gray (full-range) encoder driven in lock step by the consumer.
+    * VideoEncoderNotRegisteredException.MessageFor names the AV1 package and
+      its Register call for "av1"; when another encoder package appears, add
+      its codec id and package name there (and to the tests in
+      VideoEncodersTests).
+VideoEncodersTests holds EVERY test that touches the process-wide encoder
+registry (one class = run one at a time), just as VideoProcessorsTests does
+for the engine registry.
 
 
 FILTER-GRAPH ESCAPING - FilterGraphEscaper, and why the old arguments bypass it
@@ -399,6 +621,61 @@ and OperationCanceledException is thrown, because there the broken pipe is
 merely a side effect of the cancel.
 
 
+OUTPUT PIPES DRAIN BEFORE THEY ARE DISPOSED - a CodeBrix fix of an upstream bug
+===============================================================================
+CODEBRIX FIX ON TOP OF THE FFMpegCore PORT, in FFMpeg/FFMpegArgumentProcessor.cs
+(plus two small internal hooks in FFMpegArguments.cs and OutputPipeArgument.cs).
+Upstream's exit handler is
+
+    processResult = t.Result;
+    cancellationTokenSource.Cancel();
+    _ffMpegArguments.Post();
+
+and the SAME token is the one an OutputPipeArgument hands its IPipeSink. So the
+instant ffmpeg exits, every sink is cancelled and every output pipe disposed -
+even though the pipe still holds whatever ffmpeg wrote that the sink has not
+read yet. ffmpeg cannot exit while it still has unwritten output (it blocks on
+a full pipe), so this only bites a sink that is SLOWER than ffmpeg - and then
+it bites every time. PipeArgument.During swallows the OperationCanceledException,
+so the tail is lost with NO error. Measured: a slow StreamPipeSink reading a
+rawvideo decode of input_3sec.webm received 31,053,312 / 31,096,832 of
+31,104,000 bytes and the run "succeeded".
+
+WHAT THIS PORT DOES INSTEAD
+    * OutputPipeArgument.SinkCancellationToken (internal): the processor sets it
+      to a token of its own (sinkCancellationSource) before During starts; the
+      sink reads under it. The During token still bounds the wait for ffmpeg to
+      CONNECT, so an output pipe ffmpeg never opened (it failed first) is still
+      abandoned at exit exactly as upstream. Left unset - During called directly
+      - the sink reads under the During token as before.
+    * At exit the processor still cancels the During token and posts every
+      argument EXCEPT the output pipes (FFMpegArguments.PostAllExceptOutputPipes).
+      Input pipes are deliberately unchanged: a source still writing when ffmpeg
+      exits is writing into a closed read end, and fails as it always did.
+    * The connected sink reads to EOF (ffmpeg's write end closed), During
+      completes, and only then are the output pipes posted
+      (FFMpegArguments.PostOutputPipes, in Process()'s finally; idempotent).
+    * BOUNDED. There was no existing pipe or drain timeout in the processor to
+      reuse, so the wait is bounded by the internal
+      FFMpegArgumentProcessor.OutputPipeDrainTimeout (30 s, counted from
+      ffmpeg's exit; tests shorten it). ffmpeg can only have left one pipe
+      buffer's worth unread, so a working sink drains in a fraction of that.
+      On timeout the sink is cancelled, the pipe disposed, and Process() throws
+      FFMpegException (Type = Process) "An output pipe sink did not drain ..."
+      - raised regardless of throwOnError, with whatever the abandoned sink
+      threw as InnerException. It is never swallowed.
+    * CANCELLATION stays prompt. A cancel before ffmpeg exits makes the exit
+      handler cancel the sinks and post the output pipes at once (upstream's
+      behaviour exactly); a cancel that arrives while a sink is draining
+      cancels sinkCancellationSource from OnCancelEvent. Either way the run ends
+      in OperationCanceledException, which still outranks everything.
+    * A sink's own exception (thrown part way, or after reading to EOF - the
+      latter used to be masked by the cancellation) propagates out of
+      ProcessSynchronously / ProcessAsynchronously unchanged. Both share
+      Process(), so both get the fix.
+Fenced by tests/CodeBrix.VideoProcessing.Tests/OutputPipeDrainTests.cs.
+
+
 AV1 ENCODER FALLBACK - the missing-libsvtav1 explanation and the opt-in fallback
 ===============================================================================
 ADDITION OF THIS PORT - there is nothing like it in FFMpegCore. The CodeBrix
@@ -492,6 +769,10 @@ NOTES
     * The library writes temp files (FFMETADATA content, demux concat lists)
       into FFOptions.TemporaryFilesFolder and deletes them in the argument's
       Post() step.
+    * Output pipes are posted LATE - after their sinks have drained, not at
+      ffmpeg's exit. That is a CodeBrix fix of an upstream FFMpegCore bug (a
+      slow sink silently lost the tail); see OUTPUT PIPES DRAIN BEFORE THEY ARE
+      DISPOSED. Do not "re-sync" it away when diffing against upstream.
 ================================================================================
 END OF MAINTAINER-README
 ================================================================================

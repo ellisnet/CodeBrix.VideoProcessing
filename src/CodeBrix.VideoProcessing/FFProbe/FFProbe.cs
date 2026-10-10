@@ -176,7 +176,17 @@ public static class FFProbe
 
     private static IMediaAnalysis ParseOutput(IProcessResult instance)
     {
-        var json = string.Join(string.Empty, instance.OutputData);
+        return ParseJson(string.Join(string.Empty, instance.OutputData), instance.ErrorData);
+    }
+
+    /// <summary>Builds the friendly model from ffprobe's <c>-show_format -show_streams</c> JSON report.</summary>
+    /// <param name="json">The report.</param>
+    /// <param name="errorData">ffprobe's standard error lines, or null for none.</param>
+    /// <returns>The analysis.</returns>
+    /// <exception cref="FormatNullException">The report has no format section.</exception>
+    /// <exception cref="JsonException">The report is not valid JSON.</exception>
+    internal static IMediaAnalysis ParseJson(string json, IReadOnlyList<string> errorData = null)
+    {
         var ffprobeAnalysis = JsonSerializer.Deserialize<FFProbeAnalysis>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
         if (ffprobeAnalysis?.Format == null)
@@ -184,7 +194,7 @@ public static class FFProbe
             throw new FormatNullException();
         }
 
-        ffprobeAnalysis.ErrorData = instance.ErrorData;
+        ffprobeAnalysis.ErrorData = errorData ?? new List<string>();
         return new MediaAnalysis(ffprobeAnalysis);
     }
 

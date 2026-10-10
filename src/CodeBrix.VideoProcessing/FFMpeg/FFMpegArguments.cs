@@ -210,4 +210,26 @@ public sealed class FFMpegArguments : FFMpegArgumentsBase
             argument.Post();
         }
     }
+
+    // CODEBRIX FIX (not in upstream FFMpegCore, where FFMpegArgumentProcessor calls Post() for everything the
+    // moment ffmpeg exits) - see OUTPUT PIPES DRAIN BEFORE THEY ARE DISPOSED in MAINTAINER-README.txt. The
+    // processor now posts everything except the output pipes at exit, and the output pipes only once their
+    // sinks have read the pipe to EOF.
+    internal IEnumerable<OutputPipeArgument> OutputPipes => Arguments.OfType<OutputPipeArgument>();
+
+    internal void PostAllExceptOutputPipes()
+    {
+        foreach (var argument in Arguments.OfType<IInputOutputArgument>().Where(a => a is not OutputPipeArgument))
+        {
+            argument.Post();
+        }
+    }
+
+    internal void PostOutputPipes()
+    {
+        foreach (var argument in OutputPipes)
+        {
+            argument.Post();
+        }
+    }
 }

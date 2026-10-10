@@ -46,6 +46,9 @@
       * This is date-stamp versioning, not SemVer: minor encodes the year and
         major is pinned to 1, so major/minor do not signal API compatibility.
       * To re-baseline the minor number, change _VersionBaseYear below.
+      * Every packable project in this repository carries the SAME block, so one
+        pack run stamps them all with one version - and the dependency this
+        package declares on CodeBrix.VideoProcessing.Core is that same number.
   -->
   <PropertyGroup>
     <_VersionBaseYear>2026</_VersionBaseYear>
@@ -79,6 +82,15 @@
 
   <ItemGroup>
     <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.248.1113" />
+  </ItemGroup>
+
+  <!--
+    The Core contract is referenced as a project here and packs as a package DEPENDENCY, not as a bundled
+    assembly - both projects carry the same date-stamped version block, so one pack run stamps both with one
+    version.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\CodeBrix.VideoProcessing.Core\CodeBrix.VideoProcessing.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using CodeBrix.VideoProcessing.Builders.MetaData;
+using CodeBrix.VideoProcessing.Core.Media;
 
 namespace CodeBrix.VideoProcessing; //was previously: FFMpegCore;
 
@@ -16,10 +17,11 @@ internal class MediaAnalysis : IMediaAnalysis
     internal MediaAnalysis(FFProbeAnalysis analysis)
     {
         Format = ParseFormat(analysis.Format);
-        Chapters = analysis.Chapters.Select(c => ParseChapter(c)).ToList();
-        VideoStreams = analysis.Streams.Where(stream => stream.CodecType == "video").Select(ParseVideoStream).ToList();
-        AudioStreams = analysis.Streams.Where(stream => stream.CodecType == "audio").Select(ParseAudioStream).ToList();
-        SubtitleStreams = analysis.Streams.Where(stream => stream.CodecType == "subtitle").Select(ParseSubtitleStream).ToList();
+        var streams = analysis.Streams ?? new List<FFProbeStream>();
+        Chapters = (analysis.Chapters ?? new List<Chapter>()).Select(c => ParseChapter(c)).ToList();
+        VideoStreams = streams.Where(stream => stream.CodecType == "video").Select(ParseVideoStream).ToList();
+        AudioStreams = streams.Where(stream => stream.CodecType == "audio").Select(ParseAudioStream).ToList();
+        SubtitleStreams = streams.Where(stream => stream.CodecType == "subtitle").Select(ParseSubtitleStream).ToList();
         ErrorData = analysis.ErrorData;
     }
 
@@ -100,6 +102,10 @@ internal class MediaAnalysis : IMediaAnalysis
             ColorTransfer = stream.ColorTransfer,
             ColorPrimaries = stream.ColorPrimaries,
             Rotation = MediaAnalysisUtils.ParseRotation(stream),
+            ExactFrameRate = MediaAnalysisUtils.ParseExactFrameRate(stream.AvgFrameRate, stream.FrameRate),
+            RealFrameRate = MediaAnalysisUtils.ParseExactFrameRate(stream.FrameRate, null),
+            FrameCount = MediaAnalysisUtils.ParseFrameCount(stream.NbFrames),
+            DisplayMatrixRotation = MediaAnalysisUtils.ParseDisplayMatrixRotation(stream),
             Language = stream.GetLanguage(),
             Disposition = MediaAnalysisUtils.FormatDisposition(stream.Disposition),
             Tags = stream.Tags.ToCaseInsensitive(),
@@ -149,7 +155,7 @@ internal class MediaAnalysis : IMediaAnalysis
 
 public static class MediaAnalysisUtils
 {
-    private static readonly Regex DurationRegex = new(@"^(\d+):(\d{1,2}):(\d{1,2})\.(\d{1,3})", RegexOptions.Compiled);
+    private static readonly Regex DurationRegex = new(@"^(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d+))?", RegexOptions.Compiled);
 
     internal static Dictionary<string, string> ToCaseInsensitive(this Dictionary<string, string> dictionary)
     {
@@ -198,32 +204,110 @@ public static class MediaAnalysisUtils
         return long.Parse(line, NumberStyles.Any, CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// Parses an ffprobe / ffmpeg time: sexagesimal "H:MM:SS.ffffff" (what <c>-sexagesimal</c> prints) or plain seconds
+    /// ("3.003000"). The whole fraction is kept to the tick (100 ns), so ffprobe's microseconds survive exactly.
+    /// </summary>
+    /// <param name="duration">The text; null, empty, negative or unreadable text gives zero.</param>
+    /// <returns>The time.</returns>
     public static TimeSpan ParseDuration(string duration)
     {
-        if (!string.IsNullOrEmpty(duration))
+        if (string.IsNullOrEmpty(duration))
         {
-            var match = DurationRegex.Match(duration);
-            if (match.Success)
-            {
-                // ffmpeg may provide < 3-digit number of milliseconds (omitting trailing zeros), which won't simply parse correctly
-                // e.g. 00:12:02.11 -> 12 minutes 2 seconds and 110 milliseconds
-                var millisecondsPart = match.Groups[4].Value;
-                if (millisecondsPart.Length < 3)
-                {
-                    millisecondsPart = millisecondsPart.PadRight(3, '0');
-                }
-
-                var hours = int.Parse(match.Groups[1].Value);
-                var minutes = int.Parse(match.Groups[2].Value);
-                var seconds = int.Parse(match.Groups[3].Value);
-                var milliseconds = int.Parse(millisecondsPart);
-                return new TimeSpan(0, hours, minutes, seconds, milliseconds);
-            }
-
             return TimeSpan.Zero;
         }
 
+        var match = DurationRegex.Match(duration);
+        if (match.Success)
+        {
+            var hours = long.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+            var minutes = long.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+            var seconds = long.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
+            var ticks = hours * TimeSpan.TicksPerHour + minutes * TimeSpan.TicksPerMinute + seconds * TimeSpan.TicksPerSecond;
+            return TimeSpan.FromTicks(ticks + FractionTicks(match.Groups[4].Value));
+        }
+
+        // Plain seconds, as ffprobe prints them without -sexagesimal.
+        if (double.TryParse(duration, NumberStyles.Float, CultureInfo.InvariantCulture, out var plainSeconds) &&
+            plainSeconds > 0 && plainSeconds < TimeSpan.MaxValue.TotalSeconds)
+        {
+            return TimeSpan.FromTicks((long)Math.Round(plainSeconds * TimeSpan.TicksPerSecond));
+        }
+
         return TimeSpan.Zero;
+    }
+
+    /// <summary>
+    /// Parses an ffprobe frame rate ("30000/1001") exactly, falling back to a second one when the first is missing or
+    /// not a positive rational ("0/0").
+    /// </summary>
+    /// <param name="preferred">The rate to use when it is readable.</param>
+    /// <param name="fallback">The rate to use otherwise; may be null.</param>
+    /// <returns>The reduced rate, or <see cref="FrameRate.Unspecified" /> when neither is readable.</returns>
+    public static FrameRate ParseExactFrameRate(string preferred, string fallback)
+    {
+        if (FrameRate.TryParse(preferred, out var rate))
+        {
+            return rate;
+        }
+
+        return FrameRate.TryParse(fallback, out rate) ? rate : FrameRate.Unspecified;
+    }
+
+    /// <summary>Parses ffprobe's <c>nb_frames</c>.</summary>
+    /// <param name="frameCount">The text; may be null.</param>
+    /// <returns>The frame count, or null when it is missing or not a whole number.</returns>
+    public static long? ParseFrameCount(string frameCount)
+    {
+        return long.TryParse(frameCount, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) ? count : null;
+    }
+
+    /// <summary>
+    /// Reads the counter-clockwise rotation, in degrees, from a stream's display matrix side data: the "Display Matrix"
+    /// entry, or failing that the first side data entry that carries a rotation.
+    /// </summary>
+    /// <param name="fFProbeStream">The ffprobe stream.</param>
+    /// <returns>The rotation, or null when the stream has no display matrix rotation.</returns>
+    public static double? ParseDisplayMatrixRotation(FFProbeStream fFProbeStream)
+    {
+        var sideData = fFProbeStream.SideData;
+        if (sideData == null)
+        {
+            return null;
+        }
+
+        var entry = sideData.Find(item => item != null && item.ContainsKey("rotation") &&
+                                          item.TryGetValue("side_data_type", out var type) && type?.ToString() == "Display Matrix")
+                    ?? sideData.Find(item => item != null && item.ContainsKey("rotation"));
+        if (entry == null || entry["rotation"] == null)
+        {
+            return null;
+        }
+
+        var rotation = entry["rotation"];
+        if (rotation.TryGetValue(out double number))
+        {
+            return number;
+        }
+
+        return double.TryParse(rotation.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number) ? number : null;
+    }
+
+    private static long FractionTicks(string digits)
+    {
+        if (string.IsNullOrEmpty(digits))
+        {
+            return 0;
+        }
+
+        // Seven digits are ticks; pad shorter fractions ("83" is 830 ms) and round longer ones.
+        if (digits.Length <= 7)
+        {
+            return long.Parse(digits.PadRight(7, '0'), CultureInfo.InvariantCulture);
+        }
+
+        var ticks = long.Parse(digits.Substring(0, 7), CultureInfo.InvariantCulture);
+        return digits[7] >= '5' ? ticks + 1 : ticks;
     }
 
     public static int ParseRotation(FFProbeStream fFProbeStream)
