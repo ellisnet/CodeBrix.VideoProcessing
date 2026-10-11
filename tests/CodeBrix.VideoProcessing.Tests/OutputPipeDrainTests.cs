@@ -20,6 +20,9 @@ public class OutputPipeDrainTests
     // input_3sec.webm is 640x360; yuv420p is 1.5 bytes per pixel.
     private const long FrameBytes = 640 * 360 * 3 / 2;
 
+    // TinyDecode's single 16x16 yuv420p frame.
+    private const int TinyFrameBytes = 16 * 16 * 3 / 2;
+
     [Fact]
     public void Slow_sink_receives_every_byte_when_processed_synchronously()
     {
@@ -124,7 +127,7 @@ public class OutputPipeDrainTests
     {
         //Arrange
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        var processor = TinyDecode(NeverReadingSink()).CancellableThrough(cancellation.Token);
+        var processor = TinyDecode(StallingSink()).CancellableThrough(cancellation.Token);
         var stopwatch = Stopwatch.StartNew();
         cancellation.CancelAfter(TimeSpan.FromSeconds(2));
 
@@ -140,7 +143,7 @@ public class OutputPipeDrainTests
     public void Sink_that_does_not_drain_in_time_raises_instead_of_losing_the_tail()
     {
         //Arrange
-        var processor = TinyDecode(NeverReadingSink()).CancellableThrough(TestContext.Current.CancellationToken);
+        var processor = TinyDecode(StallingSink()).CancellableThrough(TestContext.Current.CancellationToken);
         processor.OutputPipeDrainTimeout = TimeSpan.FromSeconds(1);
 
         //Act
@@ -170,8 +173,7 @@ public class OutputPipeDrainTests
                 .ForceFormat("rawvideo"));
     }
 
-    // One 16x16 frame: small enough to sit entirely in the pipe's buffer, so ffmpeg exits at once and the
-    // processor is left waiting on the sink alone.
+    // One 16x16 frame, so ffmpeg is done almost at once and the processor is left waiting on the sink alone.
     private static FFMpegArgumentProcessor TinyDecode(IPipeSink sink)
     {
         return FFMpegArguments
@@ -182,9 +184,18 @@ public class OutputPipeDrainTests
                 .ForceFormat("rawvideo"));
     }
 
-    private static StreamPipeSink NeverReadingSink()
+    // Reads the one frame TinyDecode writes, then stalls without ever reading to EOF. It must read that frame: on
+    // Windows the output pipe has no buffer, so ffmpeg's write blocks until the sink reads it, and a sink that read
+    // nothing would keep ffmpeg from ever exiting - the drain timeout counts from that exit, so it never started and
+    // the test hung. (Unix domain sockets buffer the frame, which is why reading nothing used to be enough there.)
+    private static StreamPipeSink StallingSink()
     {
-        return new StreamPipeSink((input, token) => Task.Delay(Timeout.Infinite, token));
+        return new StreamPipeSink(async (input, token) =>
+        {
+            var frame = new byte[TinyFrameBytes];
+            await input.ReadExactlyAsync(frame, token).ConfigureAwait(false);
+            await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false);
+        });
     }
 
     // A write-only sink destination that counts what it is given and pauses for Delay after every
