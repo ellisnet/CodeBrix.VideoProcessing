@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android36.1</TargetFramework>
+    <SupportedOSPlatformVersion>33.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>com.codebrix.videoprocessing.diagnostics</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <!-- SDK / JDK defaults for this machine, the same rule as the library csproj: used only when nothing else set
+       them; override with -p:AndroidSdkDirectory=... -p:JavaSdkDirectory=... or ANDROID_HOME / JAVA_HOME. -->
+  <PropertyGroup>
+    <_CodeBrixUserAndroidSdk>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/Android/Sdk</_CodeBrixUserAndroidSdk>
+    <AndroidSdkDirectory Condition="'$(AndroidSdkDirectory)' == '' and Exists('$(_CodeBrixUserAndroidSdk)')">$(_CodeBrixUserAndroidSdk)</AndroidSdkDirectory>
+    <JavaSdkDirectory Condition="'$(JavaSdkDirectory)' == '' and Exists('/usr/lib/jvm/java-21-openjdk-amd64')">/usr/lib/jvm/java-21-openjdk-amd64</JavaSdkDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The engine under test, from source (it has no natives, so nothing else is needed). -->
+    <ProjectReference Include="..\..\src\CodeBrix.VideoProcessing.Android\CodeBrix.VideoProcessing.Android.csproj" />
+    <!-- The synthetic input clip (see tests/Assets/PROVENANCE.txt). -->
+    <AndroidAsset Include="..\..\tests\Assets\clip-h264-aac.mp4" Link="clip-h264-aac.mp4" />
+  </ItemGroup>
+</Project>

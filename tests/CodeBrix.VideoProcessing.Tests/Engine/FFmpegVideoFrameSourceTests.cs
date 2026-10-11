@@ -137,6 +137,51 @@ public class FFmpegVideoFrameSourceTests
     }
 
     [Fact]
+    public void rgb_sources_are_converted_with_an_explicit_bt709_matrix_and_say_so()
+    {
+        //Arrange
+        using var clip = new TemporaryFile("red.mkv");
+        EngineTestMedia.CreateRgbClip(clip, "red");
+        using IVideoFrameSource source = engine.OpenVideo(clip);
+
+        //Act
+        source.TryReadFrame(out VideoFrameData frame);
+        byte luma = frame.Y.GetRow(10)[10];
+        // Pure red: BT.709 luma is 0.2126 of white; BT.601's is 0.299 - far enough apart to tell which was used.
+        bool full = source.Info.ColorRange == VideoColorRange.Full;
+        int bt709 = full ? (int)Math.Round(255 * 0.2126) : (int)Math.Round(16 + 219 * 0.2126);
+        int bt601 = full ? (int)Math.Round(255 * 0.299) : (int)Math.Round(16 + 219 * 0.299);
+
+        //Assert
+        source.Info.ColorMatrix.Should().Be(VideoColorMatrix.Bt709);
+        frame.Layout.Should().Be(VideoPixelLayout.I420);
+        Math.Abs(luma - bt709).Should().BeLessThanOrEqualTo(2);
+        Math.Abs(luma - bt601).Should().BeGreaterThan(8);
+    }
+
+    [Fact]
+    public void rgba_delivery_reports_the_rgb_matrix_whatever_the_source_was()
+    {
+        //Arrange
+        using var clip = new TemporaryFile("red.mkv");
+        EngineTestMedia.CreateRgbClip(clip, "red");
+        using IVideoFrameSource fromRgb = engine.OpenVideo(clip, new VideoSourceOptions { PixelLayout = VideoPixelLayout.Rgba });
+        using IVideoFrameSource fromYuv = engine.OpenVideo(TestResources.WebmVideo, new VideoSourceOptions { PixelLayout = VideoPixelLayout.Rgba });
+
+        //Act
+        fromRgb.TryReadFrame(out VideoFrameData frame);
+        ReadOnlySpan<byte> pixel = frame.Rgba.GetRow(10).Slice(40, 4);
+
+        //Assert
+        fromRgb.Info.ColorMatrix.Should().Be(VideoColorMatrix.Rgb);
+        fromYuv.Info.ColorMatrix.Should().Be(VideoColorMatrix.Rgb);
+        // lavfi's colour source rounds through its own conversion, so "red" arrives within a couple of steps.
+        ((int)pixel[0]).Should().BeGreaterThanOrEqualTo(250);
+        ((int)pixel[1]).Should().BeLessThanOrEqualTo(5);
+        ((int)pixel[2]).Should().BeLessThanOrEqualTo(5);
+    }
+
+    [Fact]
     public void IncludeAlpha_delivers_the_alpha_plane()
     {
         //Arrange

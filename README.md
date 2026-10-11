@@ -7,10 +7,11 @@ CodeBrix.VideoProcessing is the FFmpeg/FFprobe wrapper. CodeBrix.VideoProcessing
 dependencies at all: the contract for analysing media, decoding video frames and audio samples, writing standard MP4
 video from your own frames and sound, and transcoding, trimming and joining files - through one interface that a
 separate engine package implements for each platform. CodeBrix.VideoProcessing is that engine on Windows, Linux and
-macOS.
+macOS; CodeBrix.VideoProcessing.Android is that engine on Android, built on the platform's own media codecs.
 
-CodeBrix.VideoProcessing and CodeBrix.VideoProcessing.Core are provided as .NET 10 libraries and associated
-`CodeBrix.VideoProcessing.MitLicenseForever` and `CodeBrix.VideoProcessing.Core.MitLicenseForever` NuGet packages.
+CodeBrix.VideoProcessing, CodeBrix.VideoProcessing.Core and CodeBrix.VideoProcessing.Android are provided as .NET 10
+libraries and associated `CodeBrix.VideoProcessing.MitLicenseForever`, `CodeBrix.VideoProcessing.Core.MitLicenseForever`
+and `CodeBrix.VideoProcessing.Android.MitLicenseForever` NuGet packages.
 
 CodeBrix.VideoProcessing supports applications and assemblies that target Microsoft .NET version 10.0 and later.
 Microsoft .NET version 10.0 is a Long-Term Supported (LTS) version of .NET, and was released on Nov 11, 2025; and will be actively supported by Microsoft until Nov 14, 2028.
@@ -26,6 +27,7 @@ dotnet add package CodeBrix.VideoProcessing.MitLicenseForever
 | --- | --- | --- |
 | `CodeBrix.VideoProcessing.MitLicenseForever` | Driving FFmpeg/FFprobe directly, and the Windows/Linux/macOS engine for the Core contract | CodeBrix.VideoProcessing.Core, CodeBrix.Imaging |
 | `CodeBrix.VideoProcessing.Core.MitLicenseForever` | Libraries that need video processing without depending on any particular engine | nothing |
+| `CodeBrix.VideoProcessing.Android.MitLicenseForever` | The Android engine for the Core contract (Android applications, API level 33 and newer) | CodeBrix.VideoProcessing.Core |
 
 Note that the NuGet package IDs and the namespaces are different - there is no package named plain `CodeBrix.VideoProcessing`:
 
@@ -33,8 +35,10 @@ Note that the NuGet package IDs and the namespaces are different - there is no p
 * Assembly and primary namespace: `CodeBrix.VideoProcessing` - i.e. `using CodeBrix.VideoProcessing;`
 * NuGet package ID: `CodeBrix.VideoProcessing.Core.MitLicenseForever`
 * Assembly and primary namespace: `CodeBrix.VideoProcessing.Core` - i.e. `using CodeBrix.VideoProcessing.Core;`
+* NuGet package ID: `CodeBrix.VideoProcessing.Android.MitLicenseForever`
+* Assembly and primary namespace: `CodeBrix.VideoProcessing.Android` - i.e. `using CodeBrix.VideoProcessing.Android;`
 
-XML documentation (IntelliSense) ships alongside both assemblies.
+XML documentation (IntelliSense) ships alongside every assembly.
 
 The `CodeBrix.VideoProcessing.MitLicenseForever` package pulls in two dependencies automatically; no version pinning is needed in the consuming project:
 
@@ -66,13 +70,24 @@ The `CodeBrix.VideoProcessing.MitLicenseForever` package pulls in two dependenci
 * An encoder registry (`VideoEncoders`) keyed by codec id, through which separate encoder packages plug in
 * Its own frame, plane, frame-rate and media-description types - no image library, no dependencies
 
+## CodeBrix.VideoProcessing.Android supports:
+
+* Serving as the Android engine for CodeBrix.VideoProcessing.Core, registered with one call: `CodeBrixVideoProcessingAndroid.Register()` - code written against the Core contract runs unchanged
+* Built on Android's own MediaExtractor, MediaCodec, MediaMuxer and MediaMetadataRetriever: no ffmpeg, no native code of its own
+* Describing media files, with the exact rational frame rate and frame count of MP4 / MOV files read from their sample tables
+* Decoding video to 8-bit I420, NV12, RGBA or Gray frames at a constant frame rate with seeking, and audio to interleaved float at any sample rate and channel count
+* Writing standard MP4 files - H.264 (or HEVC on devices with an HEVC encoder) with AAC audio - from your own I420, NV12 or RGBA frames and sound, with a deterministic quality-to-bitrate mapping, keyframe interval, colour tags, rotation metadata, title and creation-time tags, and fast start
+* Snapshots, whole-file transcode with resizing and frame-rate change, keyframe-snapped or frame-accurate trim, and concatenation (lossless when the inputs match, re-encoded when they do not)
+
 ## Requirements
 
 CodeBrix.VideoProcessing shells out to the `ffmpeg` and `ffprobe` executables, so they must be installed and discoverable at run time - either on the `PATH`, or in a folder configured through `GlobalFFOptions`. The library itself is fully managed C#: it does not bundle the FFmpeg binaries, does not download them, and does not P/Invoke into the FFmpeg libraries.
 
 On Debian-based Linux, `sudo apt install ffmpeg` installs both. On Windows and macOS, install them yourself and either put them on the `PATH` or point `FFOptions.BinaryFolder` at the folder that holds them.
 
-CodeBrix.VideoProcessing is not for Android - there is no ffmpeg executable to launch there, and `CodeBrixVideoProcessing.Register()` refuses to run on it. An Android application registers the `CodeBrix.VideoProcessing.Android` engine instead, and code written against CodeBrix.VideoProcessing.Core works unchanged on both.
+CodeBrix.VideoProcessing is not for Android - there is no ffmpeg executable to launch there, and `CodeBrixVideoProcessing.Register()` refuses to run on it. An Android application references `CodeBrix.VideoProcessing.Android.MitLicenseForever` and calls `CodeBrixVideoProcessingAndroid.Register()` instead, and code written against CodeBrix.VideoProcessing.Core works unchanged on both.
+
+CodeBrix.VideoProcessing.Android targets .NET 10 Android applications (`net10.0-android`) on API level 33 (Android 13) and newer. It needs nothing installed: it uses the codecs every Android device already has (H.264 and AAC everywhere; HEVC output where the device has an HEVC encoder, which the engine reports through its capabilities).
 
 CodeBrix.VideoProcessing.Core needs nothing at run time, but it contains no engine: the application must register one (see the sample below) before anything asks `VideoProcessors.Current`.
 
@@ -165,16 +180,38 @@ while (source.TryReadFrame(out VideoFrameData frame))
 writer.Finish();
 ```
 
+### Process video on Android
+
+```csharp
+using CodeBrix.VideoProcessing.Android;
+using CodeBrix.VideoProcessing.Core;
+using CodeBrix.VideoProcessing.Core.Output;
+
+// Once, at application start-up (Android):
+CodeBrixVideoProcessingAndroid.Register();
+
+// Then the same contract as on the desktop - off the UI thread, since the engine runs on the calling thread:
+IVideoProcessor engine = VideoProcessors.Current;
+engine.TrimFile(new TrimRequest
+{
+    InputPath = inputPath,
+    OutputPath = outputPath,
+    From = TimeSpan.FromSeconds(2),
+    To = TimeSpan.FromSeconds(5),
+    SnapToKeyframes = true
+});
+```
+
 ## Documentation
 
-Each NuGet package includes `AGENT-README.txt`, a complete API reference and usage guide written for AI coding agents - point your agent at that file when it is writing code against the library. In the repository, the CodeBrix.VideoProcessing.Core file lives at `src/CodeBrix.VideoProcessing.Core/AGENT-README.txt`; `README-INDEX.txt` maps them.
+Each NuGet package includes `AGENT-README.txt`, a complete API reference and usage guide written for AI coding agents - point your agent at that file when it is writing code against the library. In the repository, the CodeBrix.VideoProcessing.Core file lives at `src/CodeBrix.VideoProcessing.Core/AGENT-README.txt` and the CodeBrix.VideoProcessing.Android file at `src/CodeBrix.VideoProcessing.Android/AGENT-README.txt`; `README-INDEX.txt` maps them.
 
 Additional sample code and usage examples are available in the `CodeBrix.VideoProcessing.Tests` project:
 https://github.com/ellisnet/CodeBrix.VideoProcessing/tree/main/tests/CodeBrix.VideoProcessing.Tests
 
 ## License
 
-CodeBrix.VideoProcessing and CodeBrix.VideoProcessing.Core are licensed under the MIT License - see the
+CodeBrix.VideoProcessing, CodeBrix.VideoProcessing.Core and CodeBrix.VideoProcessing.Android are licensed under the MIT License - see the
 [LICENSE](https://github.com/ellisnet/CodeBrix.VideoProcessing/blob/main/LICENSE) file.
 
 For licensing and provenance information about the open source code included in

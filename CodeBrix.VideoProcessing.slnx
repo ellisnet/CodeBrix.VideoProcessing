@@ -12,10 +12,15 @@
     <File Path="THIRD-PARTY-NOTICES.txt" />
   </Folder>
   <Folder Name="/Tests/">
+    <Project Path="tests/CodeBrix.VideoProcessing.Android.Tests/CodeBrix.VideoProcessing.Android.Tests.csproj" />
     <Project Path="tests/CodeBrix.VideoProcessing.Core.Tests/CodeBrix.VideoProcessing.Core.Tests.csproj" />
     <Project Path="tests/CodeBrix.VideoProcessing.Tests/CodeBrix.VideoProcessing.Tests.csproj" />
     <Project Path="tests/CodeBrix.VideoProcessing.Tests.WaitingProgram/CodeBrix.VideoProcessing.Tests.WaitingProgram.csproj" />
   </Folder>
+  <Folder Name="/Samples/">
+    <Project Path="samples/VideoProcessingDiagnostics/VideoProcessingDiagnostics.csproj" />
+  </Folder>
+  <Project Path="src/CodeBrix.VideoProcessing.Android/CodeBrix.VideoProcessing.Android.csproj" />
   <Project Path="src/CodeBrix.VideoProcessing.Core/CodeBrix.VideoProcessing.Core.csproj" />
   <Project Path="src/CodeBrix.VideoProcessing/CodeBrix.VideoProcessing.csproj" />
 </Solution>

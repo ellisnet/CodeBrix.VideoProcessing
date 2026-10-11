@@ -58,7 +58,7 @@ public static class CodeBrixVideoProcessing
         {
             throw new PlatformNotSupportedException(
                 "CodeBrix.VideoProcessing drives the external ffmpeg executable, which does not exist on Android. " +
-                "Reference the CodeBrix.VideoProcessing.Android package and call CodeBrixVideoProcessingAndroid.Register() instead.");
+                "Reference the CodeBrix.VideoProcessing.Android.MitLicenseForever package and call CodeBrixVideoProcessingAndroid.Register() instead.");
         }
 
         lock (Gate)

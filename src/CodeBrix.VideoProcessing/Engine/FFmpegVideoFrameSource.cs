@@ -22,6 +22,14 @@ namespace CodeBrix.VideoProcessing.Engine;
 /// yuva420p12le. The "le" formats are little-endian with the value in the low bits - exactly the contract's layout.
 /// </para>
 /// <para>
+/// <see cref="VideoSourceInfo.ColorMatrix" /> describes the DELIVERED samples, as the contract says. A YUV source keeps
+/// its own matrix. An RGB source (an RGB pixel format, or a stream tagged with the RGB identity matrix) delivered as a
+/// YUV layout is converted with an EXPLICIT matrix - <c>scale=out_color_matrix=bt709</c> - and reports
+/// <see cref="VideoColorMatrix.Bt709" />, so the tag never names a matrix the samples do not have (swscale's own
+/// default for that conversion is BT.601, and it is not reported anywhere). RGBA delivery reports
+/// <see cref="VideoColorMatrix.Rgb" /> whatever the source was: those samples are RGB.
+/// </para>
+/// <para>
 /// Seeking restarts ffmpeg with an input <c>-ss</c> a quarter of a frame before the target frame's grid time, so the
 /// target is the first frame that survives ffmpeg's accurate seek. One buffer is reused for every frame.
 /// </para>
@@ -34,6 +42,7 @@ internal sealed class FFmpegVideoFrameSource : IVideoFrameSource
     private readonly long maximumFrames;
     private readonly bool deliverAlpha;
     private readonly string outputPixelFormat;
+    private readonly bool convertsFromRgb;
     private readonly int bytesPerSample;
     private readonly int lumaSize;
     private readonly int chromaWidth;
@@ -79,6 +88,14 @@ internal sealed class FFmpegVideoFrameSource : IVideoFrameSource
         buffer = new byte[frameSize];
 
         VideoColorRange deliveredRange = stream.ColorRange == VideoColorRange.Full ? VideoColorRange.Full : VideoColorRange.Limited;
+
+        // The matrix of the samples that come out of the pipe, not of the stream in the file (see the class remarks).
+        bool sourceIsRgb = stream.ColorMatrix == VideoColorMatrix.Rgb || stream.ChromaSubsampling == VideoChromaSubsampling.Rgb;
+        convertsFromRgb = sourceIsRgb && layout != VideoPixelLayout.Rgba;
+        VideoColorMatrix deliveredMatrix = layout == VideoPixelLayout.Rgba ? VideoColorMatrix.Rgb
+            : convertsFromRgb ? VideoColorMatrix.Bt709
+            : stream.ColorMatrix;
+
         Info = new VideoSourceInfo
         {
             Width = stream.Width,
@@ -93,7 +110,7 @@ internal sealed class FFmpegVideoFrameSource : IVideoFrameSource
             HasAlpha = deliverAlpha || layout == VideoPixelLayout.Rgba,
             RotationDegrees = stream.RotationDegrees,
             ColorRange = deliveredRange,
-            ColorMatrix = stream.ColorMatrix
+            ColorMatrix = deliveredMatrix
         };
 
         Seek(sourceOptions.StartTime);
@@ -263,7 +280,9 @@ internal sealed class FFmpegVideoFrameSource : IVideoFrameSource
         string filter = "fps=fps=" + stream.FrameRate;
         filter += Info.PixelLayout == VideoPixelLayout.Rgba
             ? ",format=rgba"
-            : ",scale=out_range=" + FFmpegNames.ToFFmpegRange(Info.ColorRange) + ",format=" + outputPixelFormat;
+            : ",scale=out_range=" + FFmpegNames.ToFFmpegRange(Info.ColorRange)
+              + (convertsFromRgb ? ":out_color_matrix=" + FFmpegNames.ToFFmpegColorSpace(Info.ColorMatrix) : string.Empty)
+              + ",format=" + outputPixelFormat;
         arguments.AddRange(new[] { "-vf", filter });
 
         if (maximumFrames > 0)

@@ -28,6 +28,10 @@ internal static class EngineTestMedia
                   $"-c:v libx264 -pix_fmt yuv420p -c:a aac -ac 2 -shortest \"{path}\"");
 
     /// <summary>A one-second 64x48 clip at exactly 30000/1001 fps (30 frames), H.264 in MP4 or FFV1 in Matroska by extension.</summary>
+    // A solid-colour RGB source (ffv1 stores it as bgr0, which ffprobe reports with the gbr colour space).
+    public static void CreateRgbClip(string path, string colour) =>
+        RunFFmpeg($"-f lavfi -i color=c={colour}:size=64x48:rate=25:duration=0.2 -c:v ffv1 -pix_fmt bgr0 \"{path}\"");
+
     public static void CreateNtscClip(string path) =>
         RunFFmpeg($"-f lavfi -i testsrc=size=64x48:rate=30000/1001 -frames:v 30 " +
                   (path.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase) ? "-c:v ffv1" : "-c:v libx264 -pix_fmt yuv420p") +

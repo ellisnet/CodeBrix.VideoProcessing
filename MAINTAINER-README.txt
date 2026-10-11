@@ -11,7 +11,7 @@ repository itself.
 
 PURPOSE AND SCOPE
 =================
-This repository produces TWO NuGet packages.
+This repository produces THREE NuGet packages.
 
     Package id ........ CodeBrix.VideoProcessing.MitLicenseForever
     Project ........... src/CodeBrix.VideoProcessing/CodeBrix.VideoProcessing.csproj
@@ -26,8 +26,16 @@ This repository produces TWO NuGet packages.
                         shipped inside that nupkg as AGENT-README.txt
     License ........... MIT
 
+    Package id ........ CodeBrix.VideoProcessing.Android.MitLicenseForever
+    Project ........... src/CodeBrix.VideoProcessing.Android/CodeBrix.VideoProcessing.Android.csproj
+    Assembly / root ns  CodeBrix.VideoProcessing.Android
+    Consumer doc ...... src/CodeBrix.VideoProcessing.Android/AGENT-README.txt -
+                        shipped inside that nupkg as AGENT-README.txt
+    License ........... MIT
+    Target ............ net10.0-android36.1, SupportedOSPlatformVersion 33
+
 The root AGENT-README.txt is the CodeBrix.VideoProcessing package's file, NOT a
-repository-wide one. README-INDEX.txt maps the two.
+repository-wide one. README-INDEX.txt maps the three.
 
 CodeBrix.VideoProcessing is a fully managed, cross-platform FFmpeg / FFprobe
 wrapper. It launches the external `ffmpeg` and `ffprobe` executables and parses
@@ -44,15 +52,19 @@ package dependencies - keep it that way: no CodeBrix.Imaging, nothing. It must
 not know anything about the CodeBrixVideo formats (CBVF, WebM authoring); those
 belong to the libraries that CONSUME the contract.
 
+CodeBrix.VideoProcessing.Android is the Android ENGINE for the Core contract,
+on MediaExtractor / MediaCodec / MediaMuxer / MediaMetadataRetriever - see THE
+ANDROID ENGINE below. It has no reference to the ffmpeg package and no natives.
+
 Project reference graph inside the repository:
 
-    CodeBrix.VideoProcessing  --ProjectReference-->  CodeBrix.VideoProcessing.Core
+    CodeBrix.VideoProcessing          --ProjectReference-->  CodeBrix.VideoProcessing.Core
+    CodeBrix.VideoProcessing.Android  --ProjectReference-->  CodeBrix.VideoProcessing.Core
 
-The ProjectReference packs as a package DEPENDENCY (not a bundled assembly).
-Both projects carry the SAME date-stamped version block, so one build/pack run
-stamps both with one version and the dependency is declared at that same
-version. A third package, CodeBrix.VideoProcessing.Android (the Android
-engine), is planned for this repository and will follow the same pattern.
+Each ProjectReference packs as a package DEPENDENCY (not a bundled assembly).
+All three projects carry the SAME date-stamped version block, so one build/pack
+run stamps them all with one version and each dependency is declared at that
+same version.
 
 
 REPOSITORY LAYOUT
@@ -139,6 +151,43 @@ REPOSITORY LAYOUT
         FFOptions.cs, GlobalFFOptions.cs, FFMetadataInputArgument.cs
         InternalsVisibleTo.cs              -- grants internals to
                                               CodeBrix.VideoProcessing.Tests
+    src/CodeBrix.VideoProcessing.Android/  -- the Android engine package
+        (root)                             -- CodeBrixVideoProcessingAndroid
+                                              (Register), InternalsVisibleTo.cs
+                                              (-> CodeBrix.VideoProcessing.
+                                              Android.Tests), AGENT-README.txt
+        Engine/                            -- the Android-only code:
+                                              AndroidVideoProcessor (public),
+                                              AndroidMediaAnalyser,
+                                              AndroidVideoFrameSource,
+                                              AndroidAudioSampleSource,
+                                              AndroidStandardVideoWriter,
+                                              AndroidFileOperations,
+                                              AndroidImageCopy, AndroidMedia
+        Managed/                           -- PLATFORM-INDEPENDENT internals (no
+                                              Android type anywhere): YUV / RGB
+                                              conversion and scaling, PCM,
+                                              channel mixer, resampler, the
+                                              quality -> bitrate table, keyframe
+                                              seconds, the constant-rate
+                                              scheduler, the MP4 box tree,
+                                              rewriter (fast start + tags) and
+                                              timing reader, MediaFormat
+                                              mapping, the concatenation rule,
+                                              the request gate, capabilities and
+                                              the registration logic. The host
+                                              tests compile these files directly.
+    tests/CodeBrix.VideoProcessing.Android.Tests/
+                                           -- HOST tests (net10.0) of the
+                                              Managed/ files, linked in as
+                                              sources; the MP4 tests make
+                                              fixtures with the host ffmpeg
+    tests/Assets/                          -- clip-h264-aac.mp4 (synthetic,
+                                              see PROVENANCE.txt there), used by
+                                              the Android host tests and bundled
+                                              into the device-proof app
+    samples/VideoProcessingDiagnostics/    -- the Android device-proof app (see
+                                              THE ANDROID ENGINE)
     tests/CodeBrix.VideoProcessing.Tests/  -- xUnit v3 + SilverAssertions
         Resources/                         -- sample media copied to the test
                                               output directory
@@ -166,8 +215,9 @@ REPOSITORY LAYOUT
                                               MAINTAINER-README.txt,
                                               README-INDEX.txt, README.md and
                                               THIRD-PARTY-NOTICES.txt; the
-                                              Tests folder carries all three
-                                              test projects
+                                              Tests folder carries all four
+                                              test projects and the Samples
+                                              folder the device-proof app
     global.json                            -- selects the
                                               Microsoft.Testing.Platform test
                                               runner. It does NOT pin an SDK
@@ -182,13 +232,22 @@ BUILDING
     dotnet restore CodeBrix.VideoProcessing.slnx
     dotnet build   CodeBrix.VideoProcessing.slnx
 
-Target framework: net10.0 only. No multi-targeting. CodeBrix.VideoProcessing
-has one package reference (CodeBrix.Imaging.ApacheLicenseForever) and one
-project reference (CodeBrix.VideoProcessing.Core); the Core has none at all;
-everything else comes from the shared framework.
+Target framework: net10.0 for CodeBrix.VideoProcessing, the Core and every
+test project; net10.0-android36.1 (SupportedOSPlatformVersion 33) for
+CodeBrix.VideoProcessing.Android and the sample. No multi-targeting.
+CodeBrix.VideoProcessing has one package reference
+(CodeBrix.Imaging.ApacheLicenseForever) and one project reference (the Core);
+the Android package has only the Core project reference; the Core has none at
+all; everything else comes from the shared framework / the Android workload.
 
-Both library csprojs set GeneratePackageOnBuild=true, so an ordinary Debug
-build also produces both .nupkg files (see PACKAGING below).
+Building the slnx therefore needs the .NET "android" workload, an Android SDK
+with the API 36 platform and a JDK the workload accepts. The Android csprojs
+default AndroidSdkDirectory to $HOME/Android/Sdk and JavaSdkDirectory to the
+Debian JDK 21 path when those exist (override with -p:... or ANDROID_HOME /
+JAVA_HOME).
+
+All three library csprojs set GeneratePackageOnBuild=true, so an ordinary
+Debug build also produces all three .nupkg files (see PACKAGING below).
 
 
 TESTING
@@ -232,6 +291,18 @@ tests/CodeBrix.VideoProcessing.Tests/AssemblyInfo.cs:
 This is MANDATORY. The integration tests spawn many ffmpeg / ffprobe / dotnet
 processes; running the test CLASSES in parallel floods the machine and looks
 like a hang. Keep parallelization off.
+
+ANDROID HOST TESTS
+    tests/CodeBrix.VideoProcessing.Android.Tests runs on the development
+    machine (net10.0). The library targets net10.0-android36.1, which a
+    desktop test project cannot reference, so - as in CodeBrix.Audio.Android -
+    the project compiles src/CodeBrix.VideoProcessing.Android/Managed/*.cs as
+    LINKED sources and references the Core project. That is why Managed/ must
+    never use an Android type. Everything that calls MediaCodec / MediaExtractor
+    / MediaMuxer is proven on devices by samples/VideoProcessingDiagnostics
+    instead. The MP4 rewriter / timing tests that need real files make them
+    with the host ffmpeg directly and skip themselves (Assert.SkipUnless) when
+    ffmpeg is not on PATH; the rest need nothing.
 
 FAST TESTS THAT DO NOT NEED FFMPEG
     The WHOLE of CodeBrix.VideoProcessing.Core.Tests (it tests the contract
@@ -289,13 +360,14 @@ OS-SPECIFIC TESTS
 
 PACKAGING AND PUBLISHING
 ========================
-There is no separate pack driver. Both library csprojs set
+There is no separate pack driver. All three library csprojs set
 GeneratePackageOnBuild=true, so `dotnet build` (or `dotnet pack`) of the slnx
-produces CodeBrix.VideoProcessing.MitLicenseForever.<v>.nupkg and
-CodeBrix.VideoProcessing.Core.MitLicenseForever.<v>.nupkg. The
-CodeBrix.VideoProcessing nuspec declares a dependency on
+produces CodeBrix.VideoProcessing.MitLicenseForever.<v>.nupkg,
+CodeBrix.VideoProcessing.Core.MitLicenseForever.<v>.nupkg and
+CodeBrix.VideoProcessing.Android.MitLicenseForever.<v>.nupkg. The two engine
+nuspecs each declare ONE dependency, on
 CodeBrix.VideoProcessing.Core.MitLicenseForever at the Core package's version
-from the same run. PUBLISH BOTH TOGETHER - a VideoProcessing package whose Core
+from the same run. PUBLISH THEM TOGETHER - an engine package whose Core
 dependency was never pushed cannot be restored.
 
 WHAT SHIPS IN THE CodeBrix.VideoProcessing NUPKG:
@@ -310,6 +382,14 @@ WHAT SHIPS IN THE CodeBrix.VideoProcessing.Core NUPKG:
     THIRD-PARTY-NOTICES.txt, the generated XML documentation file, and
     src/CodeBrix.VideoProcessing.Core/AGENT-README.txt packed at the package
     root as AGENT-README.txt.
+
+WHAT SHIPS IN THE CodeBrix.VideoProcessing.Android NUPKG:
+    lib/net10.0-android36.1/CodeBrix.VideoProcessing.Android.dll + its XML
+    documentation file, and four content files: icon-codebrix-128.png,
+    README.md (the shared root README), THIRD-PARTY-NOTICES.txt, and
+    src/CodeBrix.VideoProcessing.Android/AGENT-README.txt packed at the package
+    root as AGENT-README.txt. No native libraries; one dependency (the Core, at
+    the same version).
 
 MAINTAINER-README.txt, EXTRAS-README.txt and README-INDEX.txt are repository
 files and are deliberately NOT packed.
@@ -371,7 +451,8 @@ PROVENANCE AND VENDORED SOURCES
 
 CODING CONVENTIONS
 ==================
-    * Target framework net10.0 only; no multi-targeting.
+    * Target framework net10.0 only, no multi-targeting - except the Android
+      engine and its sample, which are net10.0-android36.1 (API 33 minimum).
     * Nullable reference types DISABLED. Do NOT add '?' to reference types and
       do NOT use the null-forgiveness '!' operator. Value-type nullables (int?,
       Size?, TimeSpan?, FFMpegLogLevel?) are fine.
@@ -476,11 +557,134 @@ DESIGN DECISIONS - read before changing the engine:
       would be a guess. The standard writer takes 8-bit I420 / RGBA only and
       throws ArgumentException for anything else (I444 / Gray already fail
       StandardVideoRequest.Validate).
+    * DELIVERED COLOUR MATRIX (FFmpegVideoFrameSource): VideoSourceInfo.ColorMatrix
+      is the matrix of the samples in the pipe, as the contract says, not the
+      file's tag. The first version copied the stream's tag, so an RGB source
+      (PNG / RGBA in .mov, ffprobe color_space=gbr) came out as 4:2:0 YUV
+      tagged Rgb - a tag the AV1 encoder package refuses for I420, which made
+      in-process authoring refuse those sources. Now an RGB source delivered
+      as YUV is converted with an EXPLICIT scale=out_color_matrix=bt709 (swscale's
+      silent default for RGB->YUV is BT.601) and reports Bt709; RGBA delivery
+      reports Rgb whatever the source; YUV sources keep their tag. The test
+      proves the matrix by the luma of pure red (0.2126 of white under BT.709,
+      0.299 under BT.601).
 
 ENGINE TESTS (tests/CodeBrix.VideoProcessing.Tests/Engine/) need ffmpeg with
 libx264, libx265, aac and ffv1 (the alpha fixture is a lossless FFV1 clip
 generated at test time). They take well under a minute.
 
+
+THE ANDROID ENGINE
+==================
+src/CodeBrix.VideoProcessing.Android implements the Core contract IN FULL on
+Android's MediaExtractor, MediaCodec, MediaMuxer and MediaMetadataRetriever:
+AndroidVideoProcessor (Name "android-mediacodec"), registered by
+CodeBrixVideoProcessingAndroid.Register() (idempotent, locked, one shared
+instance, created on first use because creating it reads the codec list). The
+consumer-facing behaviour (capability table with reasons, quality -> bitrate
+table, fast start, threading, cancellation) is in its AGENT-README; this is the
+maintainer's view.
+
+DESIGN DECISIONS - read before changing the engine:
+    * TWO HALVES. Engine/ holds everything that touches an Android type;
+      Managed/ holds everything that does not, and the host test project
+      compiles Managed/ as linked sources. Put new logic in Managed/ whenever
+      it can be phrased without an Android type (that is how the MediaFormat
+      mapping, the capability set, the request gate and the registration are
+      host-tested), and never let an Android type leak into Managed/.
+    * SYNCHRONOUS MediaCodec ON THE CALLING THREAD. Sources, the writer and the
+      whole-file operations queue input and drain output in one loop on the
+      caller's thread; no reader threads, no async callbacks. Every loop has a
+      15-second no-progress watchdog (AndroidMedia.StallTimeout) so a codec
+      process that dies (see THE HP LAPTOP below) fails with
+      VideoProcessingException instead of hanging.
+    * CONSTANT RATE = ConstantRateScheduler. Decoded pictures go to the
+      NEAREST grid slot of the stream's rate (slot 0 = the first sample time),
+      gaps repeat the previous picture, a crowded slot keeps the latest, no
+      slot after the last picture. It mirrors the desktop engine's fps filter
+      closely enough that frame indexes and counts agree on constant-rate
+      files (the device proof checks 120 / 240 / 39 / 60 frame counts).
+    * THE FRAME RATE COMES FROM PRESENTATION TIMES. MediaExtractor's
+      KEY_FRAME_RATE is a rounded number, so for MP4 / MOV the engine reads the
+      sample tables (Mp4TrackTiming): presentation times = stts decode times +
+      ctts offsets, sorted; the rate is timescale / the dominant step. Do NOT
+      go back to stts deltas alone: MediaMuxer writes B-frame streams with
+      decode deltas like 9000, 9, 8982, 9 ... (90 kHz) - the dominant decode
+      delta is 9 and the average gives 30.125 fps, which put a duplicated frame
+      at every join of a concatenation (found on the Pixel).
+    * SNAPSHOT IS THE FRAME SOURCE, NOT MediaMetadataRetriever. The contract
+      wants the first frame at or after `at`, I420, stored orientation; the
+      retriever gives the "closest" frame as a display-rotated ARGB bitmap.
+    * B-FRAMES IN SAMPLE COPIES. Copied video samples are written with their
+      presentation times exactly as read (decode order is not presentation
+      order; MediaMuxer derives the ctts). A trim's end HOLDS video samples at
+      or after To and writes them only if a later sample shown before To
+      arrives (it references them) - stopping at the first sample >= To lost
+      B-frames before To (found on the Pixel). Audio samples of the next
+      concatenated input that would overlap the previous input's sound are
+      dropped; each input starts at the previous one's last picture + one
+      frame period (track durations include B-frame delay / AAC padding).
+    * THE MP4 POST-PASS (Mp4Rewriter) does fast start AND the title /
+      creation-time tags, which MediaMuxer has no API for. MediaMuxer on API 33
+      usually reserves space at the front and writes moov there itself
+      ("ftyp moov free mdat"); when moov does not fit it goes to the end and
+      the post-pass moves it (concatenation outputs show "ftyp moov mdat" on
+      both proof devices). Offsets are patched per top-level box moved;
+      stco -> co64 upgrade when needed; the new file is written beside the old
+      and moved over it.
+    * QUALITY IS A BITRATE: QualityBitrateTable is deterministic (integer
+      ten-thousandths of a bit per pixel, exact rational fps); keep the table
+      in the AGENT-README in step if it changes. The result is clamped to the
+      encoder's BitrateRange; VBR when supported.
+    * NOT SET: AlphaFrameSource, I444FrameSource, HighBitDepthFrameSource (see
+      the AGENT-README for why). P010 decoder output is accepted and cut to its
+      top 8 bits; delivering it at 10 bits is the obvious next step.
+    * Concatenation falls back to a RE-ENCODE when the inputs do not match
+      (ConcatenationRule: MIME, size / sample format, byte-identical csd),
+      rather than failing as the contract's copy-only wording suggests.
+
+THE DEVICE PROOF - samples/VideoProcessingDiagnostics
+    A one-screen .NET for Android app (ApplicationId
+    com.codebrix.videoprocessing.diagnostics) that references the library as
+    SOURCE (no natives to carry), bundles tests/Assets/clip-h264-aac.mp4 as an
+    asset, and one second after launch runs the whole contract in 19 steps
+    (Register, Analyse, Snapshot, OpenVideo I420 / Gray / NV12 + RGBA /
+    StartTime + Seek, OpenAudio at the source format and at 22050 Hz mono,
+    CreateWriter I420 + AAC with fast start and tags, NV12 + RGBA input, HEVC,
+    TrimFile both ways, ConcatenateFiles both ways, TranscodeFile, the
+    capability refusals, cancellation). One line per step goes to logcat under
+    the tag VPDiag, then "VPDIAG RESULT: PASS: ..." or "VPDIAG RESULT: FAIL:
+    ...". Before the steps a CODEC PROBE decodes and encodes one frame; when it
+    fails, a step that then fails with VideoProcessingException is reported
+    PASSED-WITH-NOTE (with the probe's reason) - on a device whose codecs work
+    nothing is masked.
+
+        dotnet build samples/VideoProcessingDiagnostics/VideoProcessingDiagnostics.csproj -c Release
+        adb -s <serial> install -r samples/VideoProcessingDiagnostics/bin/Release/net10.0-android36.1/com.codebrix.videoprocessing.diagnostics-Signed.apk
+        adb -s <serial> logcat -c
+        adb -s <serial> shell cmd package resolve-activity --brief com.codebrix.videoprocessing.diagnostics
+        adb -s <serial> shell am start -n <the component printed above>
+        (wait for the RESULT line - about 20 s on a phone)
+        adb -s <serial> logcat -d -s VPDiag
+        adb -s <serial> pull /sdcard/Android/data/com.codebrix.videoprocessing.diagnostics/files/ .
+        adb -s <serial> shell am force-stop com.codebrix.videoprocessing.diagnostics
+
+    The pulled MP4s can be checked with the host ffprobe / ffmpeg (every one
+    should decode with no errors). Proof devices so far: a Pixel 4 XL (arm64,
+    API 33) - every step PASS; and THE HP LAPTOP below.
+
+THE HP LAPTOP (Android-x86, x86_64, API 33)
+    Its software-codec process (media.swcodec) aborts the first time a VIDEO
+    codec allocates a graphic buffer: logcat shows "F GraphicBufferMapper:
+    gralloc-mapper is missing" (the image's mapper HAL is an arm64 build:
+    "libbase.so is for EM_AARCH64"), a tombstone, and then
+    'Codec2 component "c2.android.avc.decoder" died' - also killing any
+    AAC codec in the same process at that moment. The only other codecs it has
+    are ffmpeg-based vorbis / trial ones, so it has NO working video codec.
+    The engine handles it as designed: Analyse, OpenAudio, the snapped trim
+    and the matching concatenation (sample copies, no codec) PASS, and every
+    video codec step fails with VideoProcessingException (the codec probe turns
+    them into PASSED-WITH-NOTE). Do not fight the device.
 
 ENCODER PACKAGES - how they plug into the Core
 ==============================================

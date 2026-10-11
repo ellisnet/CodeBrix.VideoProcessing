@@ -1,0 +1,25 @@
+PROVENANCE - tests/Assets
+=========================
+
+clip-h264-aac.mp4
+    A SYNTHETIC clip: no camera footage, no recording, no third-party content.
+    Picture: ffmpeg's built-in "testsrc2" pattern generator. Sound: ffmpeg's
+    built-in "sine" generator (a 440 Hz tone). Licence: none needed - generated
+    for this repository and dedicated to the public domain (CC0-1.0) by its
+    author.
+    Content: 4 s, 320x240, 30 fps (120 frames), H.264 High 4:2:0 8-bit, a
+    keyframe every 30 frames (at 0, 1, 2 and 3 s), 2 B-frames; AAC-LC stereo
+    48 kHz 96 kbit/s; moov before mdat; no metadata tags.
+    Made with the Debian ffmpeg (7.1) of the development laptop:
+
+    ffmpeg -f lavfi -i testsrc2=size=320x240:rate=30:duration=4 \
+           -f lavfi -i sine=frequency=440:sample_rate=48000:duration=4 \
+           -c:v libx264 -profile:v high -pix_fmt yuv420p -g 30 -keyint_min 30 \
+           -sc_threshold 0 -bf 2 -crf 23 \
+           -c:a aac -b:a 96k -ac 2 \
+           -map_metadata -1 -fflags +bitexact -flags:v +bitexact \
+           -flags:a +bitexact -movflags +faststart clip-h264-aac.mp4
+
+    Used by: samples/VideoProcessingDiagnostics (bundled as an Android asset;
+    the device proof's input) and tests/CodeBrix.VideoProcessing.Android.Tests
+    (the MP4 timing reader's known-answer test).

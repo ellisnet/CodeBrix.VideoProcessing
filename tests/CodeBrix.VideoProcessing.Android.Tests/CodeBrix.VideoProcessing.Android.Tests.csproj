@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    HOST tests - they run on the development machine, not on Android.
+
+    The library targets net10.0-android36.1, which a desktop test project cannot reference, so there is no
+    ProjectReference to it here. Instead this project compiles the platform-independent library sources under
+    src/CodeBrix.VideoProcessing.Android/Managed/ as LINKED files (they use no Android type), and references the
+    Core contract project they are written against. Everything that touches MediaCodec, MediaExtractor or
+    MediaMuxer is proven on devices by samples/VideoProcessingDiagnostics instead (see MAINTAINER-README.txt,
+    "THE ANDROID ENGINE").
+
+    The MP4 tests that need real files make them with the host ffmpeg directly (not through any library under
+    test) and inspect results with ffprobe; they skip themselves when ffmpeg is not on PATH.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+    <PackageReference Include="SilverAssertions.ApacheLicenseForever" Version="1.0.248.1071" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodeBrix.VideoProcessing.Core\CodeBrix.VideoProcessing.Core.csproj" />
+    <Compile Include="..\..\src\CodeBrix.VideoProcessing.Android\Managed\*.cs" Link="Managed\%(Filename)%(Extension)" />
+    <None Include="..\Assets\*.mp4" Link="Assets\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

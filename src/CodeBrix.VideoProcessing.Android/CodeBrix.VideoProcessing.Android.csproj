@@ -1,0 +1,119 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    CodeBrix.VideoProcessing.Android - the Android ENGINE for CodeBrix.VideoProcessing.Core: analysis, frame and
+    sample decoding, standard MP4 writing, transcode, trim and concatenate on the platform's own MediaExtractor /
+    MediaCodec / MediaMuxer / MediaMetadataRetriever. No native code of its own, no JNI beyond the platform bindings.
+
+    SITUATIONAL SETTINGS - documented here so they are not mistaken for oversights:
+
+      * The target framework is net10.0-android36.1, not net10.0. This is a platform package and can only be
+        referenced by an Android application project; the host test project therefore cannot ProjectReference it
+        and instead compiles the platform-independent files under Managed/ as linked sources (see
+        MAINTAINER-README.txt, "THE ANDROID ENGINE").
+
+    Everything else is the family standard: nullable reference types OFF (no `?` annotations on reference types and
+    no `!`), no ImplicitUsings (every file lists its usings), no NoWarn, XML docs on every public member.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-android36.1</TargetFramework>
+    <SupportedOSPlatformVersion>33.0</SupportedOSPlatformVersion>
+    <AssemblyName>CodeBrix.VideoProcessing.Android</AssemblyName>
+    <RootNamespace>CodeBrix.VideoProcessing.Android</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    Where the Android SDK and a JDK live on this machine, used only when the standard properties are not already set
+    by the environment, the command line or the workload. The defaults are where the Android workload's own setup puts
+    things on a Debian workstation: the SDK under the user's home directory, and the distribution's JDK 21. On a
+    machine laid out differently, pass -p:AndroidSdkDirectory=... -p:JavaSdkDirectory=... to dotnet, or set the
+    ANDROID_HOME / JAVA_HOME environment variables the workload honours.
+  -->
+  <PropertyGroup>
+    <_CodeBrixUserAndroidSdk>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/Android/Sdk</_CodeBrixUserAndroidSdk>
+    <AndroidSdkDirectory Condition="'$(AndroidSdkDirectory)' == '' and Exists('$(_CodeBrixUserAndroidSdk)')">$(_CodeBrixUserAndroidSdk)</AndroidSdkDirectory>
+    <JavaSdkDirectory Condition="'$(JavaSdkDirectory)' == '' and Exists('/usr/lib/jvm/java-21-openjdk-amd64')">/usr/lib/jvm/java-21-openjdk-amd64</JavaSdkDirectory>
+  </PropertyGroup>
+
+  <!--
+    Package / assembly version: date-stamped and auto-incrementing.
+
+    Format:  1.<x>.<y>.<z>   (every field is derived from UTC "now")
+
+      1  (major)     Always 1 for this library.
+      x  (minor)     Whole years since $(_VersionBaseYear).
+                     With base 2026: 2026=0, 2027=1, 2028=2, ...
+      y  (build)     Day of year, 1-based inclusive, UTC.
+                     Jan 1 = 1, Feb 1 = 32, Dec 31 = 365 (366 in a leap year).
+      z  (revision)  Minute of day, UTC, range 0 to 1439.
+                     00:00 = 0, 23:59 = 1439.
+
+    The version is always strictly increasing over time:
+      * within a day, z grows;
+      * at a day boundary, y increments and outranks z resetting to 0;
+      * at a (UTC) year boundary, x increments and outranks y and z resetting.
+
+    Notes / caveats:
+      * All fields read from System.DateTime.UtcNow, so a local dev build and a
+        UTC CI build agree on the value. Math.Floor on the minutes keeps z in
+        0..1439 (plain rounding could land on 1440 late in the day).
+      * Because the value depends on the clock, every build produces a NEW
+        version. With GeneratePackageOnBuild=true that means a fresh .nupkg on
+        each build, and two builds in the SAME UTC minute produce the SAME
+        version (so do not publish two packages from within one minute).
+      * This is date-stamp versioning, not SemVer: minor encodes the year and
+        major is pinned to 1, so major/minor do not signal API compatibility.
+      * To re-baseline the minor number, change _VersionBaseYear below.
+      * Every packable project in this repository carries the SAME block, so one
+        pack run stamps them all with one version - and the dependency this
+        package declares on CodeBrix.VideoProcessing.Core is that same number.
+  -->
+  <PropertyGroup>
+    <_VersionBaseYear>2026</_VersionBaseYear>
+    <_VersionYears>$([MSBuild]::Subtract($([System.DateTime]::UtcNow.Year), $(_VersionBaseYear)))</_VersionYears>
+    <_VersionDayOfYear>$([System.DateTime]::UtcNow.DayOfYear)</_VersionDayOfYear>
+    <_VersionMinuteOfDay>$([System.Convert]::ToInt32($([System.Math]::Floor($([System.DateTime]::UtcNow.TimeOfDay.TotalMinutes)))))</_VersionMinuteOfDay>
+    <BuildVersion>1.$(_VersionYears).$(_VersionDayOfYear).$(_VersionMinuteOfDay)</BuildVersion>
+    <Version>$(BuildVersion)</Version>
+    <AssemblyVersion>$(BuildVersion)</AssemblyVersion>
+    <FileVersion>$(BuildVersion)</FileVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>CodeBrix.VideoProcessing.Android.MitLicenseForever</PackageId>
+    <Product>CodeBrix.VideoProcessing.Android</Product>
+    <Title>CodeBrix.VideoProcessing.Android</Title>
+    <Authors>Jeremy Ellis</Authors>
+    <Description>The Android engine for CodeBrix.VideoProcessing.Core: analyse media files, decode video frames (I420, NV12, RGBA or Gray) and audio samples, write standard MP4 video (H.264, or HEVC where the device has an encoder, with AAC audio and a fast-start index) from your own frames and sound, take snapshots, and transcode, trim and join files - all on Android's own MediaExtractor, MediaCodec and MediaMuxer, with no native code and no ffmpeg. For .NET 10 Android applications on API level 33 and newer; register it once with CodeBrixVideoProcessingAndroid.Register() and code written against CodeBrix.VideoProcessing.Core works unchanged.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.VideoProcessing</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ellisnet/CodeBrix.VideoProcessing</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageIcon>icon-codebrix-128.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright (c) 2026 Jeremy Ellis and contributors</Copyright>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <IsPackable>true</IsPackable>
+    <PackageTags>android;video;audio;processing;transcode;mp4;h264;hevc;aac;mediacodec;frames;CodeBrix</PackageTags>
+  </PropertyGroup>
+
+  <!--
+    The Core contract is referenced as a project here and packs as a package DEPENDENCY, not as a bundled
+    assembly - every packable project carries the same date-stamped version block, so one pack run stamps them all
+    with one version.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\CodeBrix.VideoProcessing.Core\CodeBrix.VideoProcessing.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\icon-codebrix-128.png" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+    <None Include="AGENT-README.txt" Pack="true" PackagePath="AGENT-README.txt" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

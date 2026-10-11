@@ -2488,6 +2488,15 @@ How each contract member is carried out:
                                the yuva* variants when IncludeAlpha is set and
                                the source has alpha (A at the frame's depth,
                                full range); rgba (8-bit only) for RGBA.
+                             Info.ColorMatrix names the DELIVERED samples'
+                             matrix: a YUV source keeps its own; an RGB source
+                             (RGB pixel format, or tagged with the RGB
+                             identity matrix) delivered as a YUV layout is
+                             converted with an explicit
+                             scale=out_color_matrix=bt709 and reports Bt709
+                             (never the RGB tag, which an AV1 encoder refuses
+                             for 4:2:0); RGBA delivery reports Rgb whatever
+                             the source was.
                              12-bit I420 WITH alpha is refused
                              (NotSupportedException): ffmpeg has no
                              yuva420p12le. VideoSourceOptions.BitDepth picks

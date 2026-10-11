@@ -115,7 +115,10 @@ public interface IVideoProcessor
     /// <exception cref="NotSupportedException">The engine lacks <see cref="VideoProcessorCapabilities.DirectTrim" />.</exception>
     void TrimFile(TrimRequest request, IProgress<VideoProgress> progress = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Joins files that share the same codecs and stream parameters, one after the other, without re-encoding.</summary>
+    /// <summary>
+    /// Joins files one after the other. Inputs that share the same codecs and stream parameters are joined without
+    /// re-encoding; an engine may re-encode inputs that do not match, or refuse them - its documentation says which.
+    /// </summary>
     /// <param name="request">The inputs, in order, and the output.</param>
     /// <param name="progress">Receives progress; may be null.</param>
     /// <param name="cancellationToken">Cancels the operation; a partial output file is deleted.</param>

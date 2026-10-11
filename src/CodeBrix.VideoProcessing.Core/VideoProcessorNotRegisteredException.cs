@@ -12,7 +12,7 @@ public class VideoProcessorNotRegisteredException : VideoProcessingException
         "No video processor engine is registered. CodeBrix.VideoProcessing.Core is only the contract; the application " +
         "must reference an engine package and register it once at start-up: on Windows, Linux and macOS reference " +
         "CodeBrix.VideoProcessing.MitLicenseForever (package CodeBrix.VideoProcessing, the ffmpeg engine) and call " +
-        "CodeBrixVideoProcessing.Register(); on Android reference the CodeBrix.VideoProcessing.Android package and call " +
+        "CodeBrixVideoProcessing.Register(); on Android reference the CodeBrix.VideoProcessing.Android.MitLicenseForever package and call " +
         "CodeBrixVideoProcessingAndroid.Register().";
 
     /// <summary>Creates the exception with <see cref="DefaultMessage" />.</summary>

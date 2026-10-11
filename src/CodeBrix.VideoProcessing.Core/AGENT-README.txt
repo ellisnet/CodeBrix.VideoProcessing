@@ -33,7 +33,7 @@ Two kinds of code use this package, and this file covers both:
            CodeBrix.VideoProcessing) - Windows, Linux, macOS; drives the
            external ffmpeg / ffprobe executables.
            Register with: CodeBrixVideoProcessing.Register();
-         * CodeBrix.VideoProcessing.Android - Android; the platform's own
+         * CodeBrix.VideoProcessing.Android.MitLicenseForever - Android; the platform's own
            MediaCodec / MediaExtractor / MediaMuxer.
            Register with: CodeBrixVideoProcessingAndroid.Register();
 

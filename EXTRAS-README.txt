@@ -4,9 +4,52 @@ Samples, tools and other content in this repository that is not part of a NuGet
 package
 ================================================================================
 
-This repository ships no sample applications, demos or tools. Everything that is
-not a library is test content. The only non-package content is the three
-projects under tests/ and the sample media they use.
+Besides the libraries, this repository holds ONE sample application - the
+Android device-proof app under samples/ - the four projects under tests/, and
+the media they use. There are no demos or tools.
+
+
+samples/VideoProcessingDiagnostics
+==================================
+Path:  samples/VideoProcessingDiagnostics/
+What:  A one-screen .NET for Android app (API 33 and newer, arm64 and x86_64)
+       that proves the CodeBrix.VideoProcessing.Android engine on a real
+       device. It references the library as source, bundles
+       tests/Assets/clip-h264-aac.mp4, and one second after launch runs the
+       whole CodeBrix.VideoProcessing.Core contract in 19 steps - analyse,
+       snapshot, every offered frame layout with seeking, audio with
+       resampling, MP4 writing from I420 / NV12 / RGBA frames (and HEVC where
+       the device can), trim, concatenate, transcode, the capability refusals
+       and cancellation - logging one PASS / PASSED-WITH-NOTE / FAIL line per
+       step and a final "VPDIAG RESULT:" line to logcat (tag VPDiag). The MP4s
+       it writes are copied to the app's external files folder for adb pull.
+Run:   See MAINTAINER-README.txt, "THE ANDROID ENGINE" (build, install, start,
+       logcat, pull, force-stop). Not packable, not published.
+Shows: The engine used exactly as an application uses it: Register at start-up,
+       then only the Core contract - off the UI thread.
+
+
+tests/CodeBrix.VideoProcessing.Android.Tests
+============================================
+Path:  tests/CodeBrix.VideoProcessing.Android.Tests/
+What:  Host (net10.0) xUnit v3 + SilverAssertions tests of the Android engine's
+       platform-independent half (src/CodeBrix.VideoProcessing.Android/
+       Managed/, compiled in as linked sources): pixel and audio conversions,
+       the resampler and mixer, the quality -> bitrate table, the constant-rate
+       scheduler, the MP4 fast-start / tag rewriter and timing reader, the
+       MediaFormat mapping, the concatenation rule, the capability gate and
+       registration. Not packable, not published.
+Run:   dotnet test CodeBrix.VideoProcessing.slnx (runs every suite). The MP4
+       tests that need real files use the host ffmpeg and skip without it.
+
+
+tests/Assets
+============
+Path:  tests/Assets/
+What:  clip-h264-aac.mp4 - a synthetic 4-second H.264 + AAC clip made with
+       ffmpeg's test-pattern and tone generators; PROVENANCE.txt records the
+       exact command. Used by the Android host tests and bundled into the
+       device-proof app. Not shipped in any nupkg.
 
 
 tests/CodeBrix.VideoProcessing.Tests
