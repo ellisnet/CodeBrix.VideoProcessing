@@ -73,10 +73,14 @@ internal static class HostTools
 
     private static string Run(string tool, string arguments)
     {
+        // ffmpeg / ffprobe write UTF-8. Without an explicit encoding, .NET on Windows decodes redirected output with
+        // the console's code page, which is the OEM one (e.g. 437) in a Visual Studio test host.
         var startInfo = new ProcessStartInfo(tool, arguments)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
             UseShellExecute = false
         };
         using Process process = Process.Start(startInfo) ?? throw new InvalidOperationException(tool + " did not start.");
