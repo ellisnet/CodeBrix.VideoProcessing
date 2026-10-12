@@ -145,6 +145,13 @@ CAPABILITIES
     AlphaFrameSource         NEVER   Android's video decoders expose no alpha
                                      plane. (See ALPHA AND MODE3 below.)
     I444FrameSource          NEVER   The platform decoders deliver 4:2:0 only.
+    ExternalTools            NEVER   An Android app has no external command-line
+                                     tools to run; the engine works through the
+                                     platform's media APIs and is not an
+                                     IExternalToolHost, so TryGetExternalTools
+                                     is false. (Desktop consumers that run
+                                     ffmpeg lines get them from the ffmpeg
+                                     engine.)
     HighBitDepthFrameSource  when    Set only when MediaCodecList has a VIDEO
                              device  DECODER whose capabilities list
                              has a   COLOR_FormatYUVP010 (10-bit output) for one
@@ -197,6 +204,18 @@ Analyse / AnalyseAsync
         AudioStreamInfo             CodecName ("aac", "opus", "vorbis", "flac",
                                     "mp3", "pcm", ...), SampleRate, Channels,
                                     Duration, BitDepth (raw PCM only)
+        SubtitleStreamInfo          every track whose MIME starts with "text/"
+                                    or is "application/x-subrip" /
+                                    "application/ttml+xml": Index = the
+                                    MediaExtractor track index, CodecName in
+                                    ffmpeg's words ("mov_text" for an MP4's
+                                    3GPP timed text "text/3gpp-tt", "webvtt",
+                                    "subrip", "ttml", "eia_608"; else the MIME
+                                    type), Language from KEY_LANGUAGE ("und" ->
+                                    null), Title null (the platform reports
+                                    none), Tags["language"], Tags["mime"]
+        MediaInfo.Chapters          ALWAYS EMPTY - MediaExtractor and
+                                    MediaMetadataRetriever expose no chapters
         MediaInfo.Tags              title, date, artist, album, album_artist,
                                     author, composer, writer, genre, year,
                                     location, track, disc, compilation - when

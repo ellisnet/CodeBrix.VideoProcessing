@@ -76,7 +76,16 @@ REPOSITORY LAYOUT
                                               VideoProgress and the three
                                               exceptions
         Media/                             -- MediaInfo, Video/AudioStreamInfo,
+                                              SubtitleStreamInfo, ChapterInfo,
                                               FrameRate, colour / chroma enums
+        Tools/                             -- the external-tools facet:
+                                              IExternalToolHost, IExternalTools,
+                                              ExternalTool, ExternalToolArguments
+                                              (the pinned quoting),
+                                              ExternalToolCommand,
+                                              ExternalToolResult, and the ONE
+                                              ExternalToolRunner +
+                                              ExternalToolLocator
         Frames/                            -- VideoFrameData, VideoPlane,
                                               VideoPixelLayout, frame and sample
                                               sources, their options and infos
@@ -140,6 +149,7 @@ REPOSITORY LAYOUT
                                               (public) and its internals -
                                               FFmpegProbe, FFmpegNames,
                                               FFmpegToolProcess,
+                                              FFmpegExternalTools,
                                               FFmpegVideoFrameSource,
                                               FFmpegAudioSampleSource,
                                               FFmpegStandardVideoWriter,
@@ -571,6 +581,31 @@ DESIGN DECISIONS - read before changing the engine:
       proves the matrix by the luma of pure red (0.2126 of white under BT.709,
       0.299 under BT.601).
 
+    * THE EXTERNAL-TOOLS FACET (Engine/FFmpegExternalTools, Core's Tools/
+      namespace): the engine reports VideoProcessorCapabilities.ExternalTools
+      and implements IExternalToolHost, so a consumer that composes its own
+      ffmpeg / ffprobe lines (the desktop authoring library) runs them through
+      the registered engine without referencing this package. BinaryFolder is
+      the engine's FFOptions.BinaryFolder (its own options, else
+      GlobalFFOptions.Current), read LIVE at each call. Locate MUST agree with
+      GlobalFFOptions.GetFFMpegBinaryPath / GetFFProbeBinaryPath: <folder>/x64 (x86), then <folder>, then
+      the PATH - a test pins the two side by side; change both or neither.
+      Run = Core's ExternalToolRunner (the one runner; the engine has no
+      process code for it). The PORT'S OWN OPERATIONS (FFMpegArgumentProcessor
+      on the vendored Instances runner, FFProbe) and the engine's readers
+      (FFmpegToolProcess) and writer are NOT moved onto the Core runner -
+      faithful port; converging them is a separate, later decision.
+      The QUOTING CONTRACT of ExternalToolArguments.Render reproduces the
+      port's rendering (InputArgument / OutputArgument wrap paths in double
+      quotes, nothing escaped; argument texts joined with single spaces), so
+      lines a consumer records stay byte-identical when it moves from the port
+      to the facet. Core.Tests/Tools/ExternalToolArgumentsTests pins it.
+    * SUBTITLES AND CHAPTERS IN Analyse: FFmpegProbe maps the friendly model's
+      SubtitleStreams and Chapters onto MediaInfo.SubtitleStreams / Chapters.
+      The port's ChapterData keeps only title / start / end and puts the
+      placeholder "TitleValueNotSet" in an untitled chapter - the engine maps
+      that to a null Title; chapter Tags carry the title only.
+
 ENGINE TESTS (tests/CodeBrix.VideoProcessing.Tests/Engine/) need ffmpeg with
 libx264, libx265, aac and ffv1 (the alpha fixture is a lossless FFV1 clip
 generated at test time). They take well under a minute.
@@ -677,9 +712,9 @@ DESIGN DECISIONS - read before changing the engine:
 THE DEVICE PROOF - samples/VideoProcessingDiagnostics
     A one-screen .NET for Android app (ApplicationId
     com.codebrix.videoprocessing.diagnostics) that references the library as
-    SOURCE (no natives to carry), bundles tests/Assets/clip-h264-aac.mp4 and
-    clip-hevc10-aac.mp4 as assets, and one second after launch runs the whole
-    contract in 22 steps
+    SOURCE (no natives to carry), bundles tests/Assets/clip-h264-aac.mp4,
+    clip-hevc10-aac.mp4 and clip-h264-aac-srt.mp4 as assets, and one second after launch runs the whole
+    contract in 23 steps
     (Register, Analyse, Snapshot, OpenVideo I420 / Gray / NV12 + RGBA /
     StartTime + Seek, OpenAudio at the source format and at 22050 Hz mono,
     CreateWriter I420 + AAC with fast start and tags, NV12 + RGBA input, HEVC,
@@ -689,7 +724,10 @@ THE DEVICE PROOF - samples/VideoProcessingDiagnostics
     frame0-i420-10bit.raw for a host cmp against ffmpeg's yuv420p10le decode,
     the 8-bit delivery = 10-bit >> 2 - Gray + NV12 10-bit, and 10-bit from
     the 8-bit clip = 8-bit << 2; without HighBitDepthFrameSource those steps
-    check the refusal and pass with a note). A "VPDiag 10-bit probe:" line
+    check the refusal and pass with a note), then step 23: Analyse of the
+    bundled clip-h264-aac-srt.mp4 reports ONE subtitle stream (mov_text, from
+    MediaExtractor's text/3gpp-tt, language eng) and no chapters, and the
+    engine offers no external tools (TryGetExternalTools false). A "VPDiag 10-bit probe:" line
     lists the decoders that offer P010. One line per step goes to logcat under
     the tag VPDiag, then "VPDIAG RESULT: PASS: ..." or "VPDIAG RESULT: FAIL:
     ...". Before the steps a CODEC PROBE decodes and encodes one frame; when it

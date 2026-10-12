@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using CodeBrix.VideoProcessing.Builders.MetaData;
 using CodeBrix.VideoProcessing.Core;
 using CodeBrix.VideoProcessing.Core.Media;
 using CodeBrix.VideoProcessing.Exceptions;
@@ -73,9 +74,55 @@ internal static class FFmpegProbe
                 .Select(stream => MapVideo(stream, containerDuration))
                 .ToList(),
             AudioStreams = analysis.AudioStreams.Select(stream => MapAudio(stream, containerDuration)).ToList(),
+            SubtitleStreams = (analysis.SubtitleStreams ?? new List<SubtitleStream>()).Select(MapSubtitle).ToList(),
+            Chapters = MapChapters(analysis.Chapters),
             Tags = analysis.Format.Tags
         };
     }
+
+    // The friendly model's language is the stream's "language" tag; "und" (undetermined) is no language at all.
+    private static SubtitleStreamInfo MapSubtitle(SubtitleStream stream)
+    {
+        Dictionary<string, string> tags = stream.Tags ?? new Dictionary<string, string>();
+        tags.TryGetValue("title", out string title);
+        string language = string.IsNullOrEmpty(stream.Language) || stream.Language == "und" ? null : stream.Language;
+
+        return new SubtitleStreamInfo
+        {
+            Index = stream.Index,
+            CodecName = stream.CodecName,
+            Language = language,
+            Title = string.IsNullOrEmpty(title) ? null : title,
+            Tags = tags
+        };
+    }
+
+    // The friendly model keeps a chapter's title (with the port's "TitleValueNotSet" placeholder when the chapter has
+    // none), start and end, in file order; it does not keep the chapter's other tags, so Tags carries the title only.
+    private static List<ChapterInfo> MapChapters(List<ChapterData> chapters)
+    {
+        var mapped = new List<ChapterInfo>();
+        if (chapters == null) return mapped;
+
+        for (int i = 0; i < chapters.Count; i++)
+        {
+            ChapterData chapter = chapters[i];
+            string title = chapter.Title == UntitledChapter || string.IsNullOrEmpty(chapter.Title) ? null : chapter.Title;
+            mapped.Add(new ChapterInfo
+            {
+                Index = i,
+                Start = Positive(chapter.Start),
+                End = Positive(chapter.End),
+                Title = title,
+                Tags = title == null ? null : new Dictionary<string, string> { ["title"] = title }
+            });
+        }
+
+        return mapped;
+    }
+
+    // What the ported MediaAnalysis puts in ChapterData.Title when a chapter has no title tag.
+    private const string UntitledChapter = "TitleValueNotSet";
 
     // ffprobe's choice of frame rate: r_frame_rate (the "real" base rate) unless it is missing or absurd - some
     // containers report 90000/1 or 1000/1 - in which case avg_frame_rate.

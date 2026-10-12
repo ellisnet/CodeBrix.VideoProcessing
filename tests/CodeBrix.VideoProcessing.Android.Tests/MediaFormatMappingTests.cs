@@ -18,6 +18,11 @@ public class MediaFormatMappingTests
     [InlineData("audio/opus", "opus")]
     [InlineData("AUDIO/FLAC", "flac")]
     [InlineData("video/x-unknown", "video/x-unknown")]
+    [InlineData("text/3gpp-tt", "mov_text")]
+    [InlineData("text/vtt", "webvtt")]
+    [InlineData("application/x-subrip", "subrip")]
+    [InlineData("application/ttml+xml", "ttml")]
+    [InlineData("text/cea-608", "eia_608")]
     [InlineData(null, null)]
     public void mime_types_map_to_ffmpeg_codec_names(string mime, string name)
         => MediaFormatMapping.CodecNameFromMime(mime).Should().Be(name);
@@ -154,7 +159,58 @@ public class MediaFormatMappingTests
         info.Tags["title"].Should().Be("Holiday");
         info.Tags["creation_time"].Should().Be("2026-10-11T12:03:04.000000Z");
         info.Tags.ContainsKey("artist").Should().BeFalse();
+        info.SubtitleStreams.Count.Should().Be(1);
+        info.SubtitleStreams[0].Index.Should().Be(2);
+        info.SubtitleStreams[0].CodecName.Should().Be("subrip");
+        info.Chapters.Should().BeEmpty();
     }
+
+    [Fact]
+    public void subtitle_tracks_map_with_index_codec_and_language_and_no_chapters_are_invented()
+    {
+        //Arrange - the track list MediaExtractor reports for tests/Assets/clip-h264-aac-srt.mp4, plus a second text track
+        var tracks = new List<TrackDescription>
+        {
+            new TrackDescription { Index = 0, Mime = "video/avc", Width = 320, Height = 240, DurationMicroseconds = 2_000_000, FrameRateValue = 30 },
+            new TrackDescription { Index = 1, Mime = "audio/mp4a-latm", SampleRate = 48000, ChannelCount = 2, DurationMicroseconds = 2_000_000 },
+            new TrackDescription { Index = 2, Mime = "text/3gpp-tt", Language = "eng", DurationMicroseconds = 2_000_000 },
+            new TrackDescription { Index = 3, Mime = "text/vtt", Language = "und" }
+        };
+
+        //Act
+        MediaInfo info = MediaFormatMapping.BuildMediaInfo("video/mp4", 2000, tracks, null);
+
+        //Assert
+        info.HasSubtitles.Should().BeTrue();
+        info.SubtitleStreams.Count.Should().Be(2);
+        SubtitleStreamInfo first = info.SubtitleStreams[0];
+        first.Index.Should().Be(2);
+        first.CodecName.Should().Be("mov_text");
+        first.Language.Should().Be("eng");
+        first.Title.Should().BeNull();
+        first.Tags["language"].Should().Be("eng");
+        first.Tags["mime"].Should().Be("text/3gpp-tt");
+        SubtitleStreamInfo second = info.SubtitleStreams[1];
+        second.CodecName.Should().Be("webvtt");
+        second.Language.Should().BeNull();
+        second.Tags.ContainsKey("language").Should().BeFalse();
+        info.VideoStreams.Count.Should().Be(1);
+        info.AudioStreams.Count.Should().Be(1);
+        info.HasChapters.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("text/3gpp-tt", true)]
+    [InlineData("TEXT/VTT", true)]
+    [InlineData("text/cea-608", true)]
+    [InlineData("application/x-subrip", true)]
+    [InlineData("application/ttml+xml", true)]
+    [InlineData("application/octet-stream", false)]
+    [InlineData("video/avc", false)]
+    [InlineData("audio/mp4a-latm", false)]
+    [InlineData(null, false)]
+    public void subtitle_tracks_are_recognised_by_mime(string mime, bool subtitle)
+        => new TrackDescription { Mime = mime }.IsSubtitle.Should().Be(subtitle);
 
     [Fact]
     public void an_unset_mp4_date_is_dropped()

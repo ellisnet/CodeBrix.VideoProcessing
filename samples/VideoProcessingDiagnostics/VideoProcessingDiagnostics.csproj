@@ -22,5 +22,7 @@
     <AndroidAsset Include="..\..\tests\Assets\clip-h264-aac.mp4" Link="clip-h264-aac.mp4" />
     <!-- The synthetic 10-bit HEVC clip with the luma ramp, for the 10-bit steps (see PROVENANCE.txt). -->
     <AndroidAsset Include="..\..\tests\Assets\clip-hevc10-aac.mp4" Link="clip-hevc10-aac.mp4" />
+    <!-- The synthetic clip with one 3GPP timed-text subtitle track, for step 23 (see PROVENANCE.txt). -->
+    <AndroidAsset Include="..\..\tests\Assets\clip-h264-aac-srt.mp4" Link="clip-h264-aac-srt.mp4" />
   </ItemGroup>
 </Project>

@@ -22,6 +22,7 @@
     <Content Include="ffmpeg.config.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <None Include="..\Assets\clip-h264-aac-srt.mp4" Link="Assets\clip-h264-aac-srt.mp4" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Resources\**\*" Exclude="Resources\**\*.cs">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

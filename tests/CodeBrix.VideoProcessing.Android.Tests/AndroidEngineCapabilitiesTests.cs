@@ -164,4 +164,14 @@ public class AndroidEngineCapabilitiesTests
         AndroidEngineCapabilities.ChooseP010Decoder(candidates, "video/hevc", "c2.qti.hevc.decoder").Should().BeNull();
         AndroidEngineCapabilities.ChooseP010Decoder(null, "video/hevc", null).Should().BeNull();
     }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public void external_tools_are_never_reported_on_android(bool hevcEncoder, bool p010Decoder)
+        => AndroidEngineCapabilities.Compute(hevcEncoder, p010Decoder).HasFlag(VideoProcessorCapabilities.ExternalTools).Should().BeFalse();
+
+    [Fact]
+    public void external_tools_are_not_reported_for_a_whole_codec_list()
+        => AndroidEngineCapabilities.Compute(PhoneCodecs(hevcDecoderListsP010: true)).HasFlag(VideoProcessorCapabilities.ExternalTools).Should().BeFalse();
 }

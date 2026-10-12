@@ -12,6 +12,11 @@ write a standard MP4 (H.264 or HEVC video + AAC audio) from frames and sound you
 supply, and transcode / trim / join files - all through ONE interface,
 IVideoProcessor, that a separate ENGINE package implements per platform.
 
+It also carries an OPTIONAL "EXTERNAL TOOLS" FACET: an engine that can locate
+and run external command-line tools (the ffmpeg engine) hands them out through
+IExternalTools, so a consumer can run its OWN command lines through whichever
+engine is registered (see EXTERNAL TOOLS below).
+
 It also carries the SEAM for standalone video ENCODERS: a second registry,
 VideoEncoders, keyed by codec id ("av1", "h264", "hevc"), where an encoder
 package registers an IVideoEncoderFactory - frames in, compressed packets out
@@ -66,8 +71,15 @@ NAMESPACES
                                                   // VideoProcessorExtensions,
                                                   // VideoProgress, the exceptions
     using CodeBrix.VideoProcessing.Core.Media;    // MediaInfo, VideoStreamInfo,
-                                                  // AudioStreamInfo, FrameRate,
+                                                  // AudioStreamInfo,
+                                                  // SubtitleStreamInfo,
+                                                  // ChapterInfo, FrameRate,
                                                   // colour / chroma enums
+    using CodeBrix.VideoProcessing.Core.Tools;    // IExternalToolHost,
+                                                  // IExternalTools,
+                                                  // ExternalTool(Arguments,
+                                                  // Command, Result, Runner,
+                                                  // Locator)
     using CodeBrix.VideoProcessing.Core.Frames;   // VideoFrameData, VideoPlane,
                                                   // VideoPixelLayout,
                                                   // IVideoFrameSource,
@@ -202,6 +214,9 @@ OPTIONAL - VideoProcessorCapabilities [Flags]:
     GrayFrameSource      OpenVideo can deliver Gray (luma only) frames
     HighBitDepthFrameSource  OpenVideo can deliver 10- and 12-bit YUV / Gray
                          frames (VideoSourceOptions.BitDepth)
+    ExternalTools        the engine can locate and run external command-line
+                         tools and offers them (IExternalToolHost); see
+                         EXTERNAL TOOLS. No IVideoProcessor member needs it.
 The last three are FRAME-SOURCE capabilities only: the standard MP4 writer takes
 8-bit I420 / NV12 / RGBA and nothing else, whatever the engine. An engine with
 a flag may still refuse one combination it cannot produce exactly (for example
@@ -238,9 +253,11 @@ MediaInfo (sealed, init-only properties; collections never null):
     TimeSpan Duration
     IReadOnlyList<VideoStreamInfo> VideoStreams
     IReadOnlyList<AudioStreamInfo> AudioStreams
+    IReadOnlyList<SubtitleStreamInfo> SubtitleStreams   empty when none / unseen
+    IReadOnlyList<ChapterInfo> Chapters                 empty when none / unread
     IReadOnlyDictionary<string,string> Tags      case-insensitive
     VideoStreamInfo PrimaryVideo / AudioStreamInfo PrimaryAudio   (first, or null)
-    bool HasVideo / HasAudio
+    bool HasVideo / HasAudio / HasSubtitles / HasChapters
 
 VideoStreamInfo:
     int Index; string CodecName; int Width, Height (STORED size, not rotated);
@@ -254,6 +271,22 @@ VideoStreamInfo:
 
 AudioStreamInfo: Index, CodecName, SampleRate, Channels, BitDepth (0 when not
 meaningful, e.g. AAC), Duration, Tags.
+
+SubtitleStreamInfo: int Index (the engine's stream index, counting every
+stream type); string CodecName (ffmpeg's words where the engine can map them:
+"mov_text", "webvtt", "subrip", "ass", ...); string Language (null when not
+declared; "und" is reported as null); string Title (null when none); Tags.
+It only says the stream is THERE - no engine decodes subtitles through the
+contract.
+
+ChapterInfo: int Index (position in the chapter list, from 0); TimeSpan Start,
+End; string Title (null when none); Tags (at least "title" when there is one);
+TimeSpan Duration (End - Start, never negative).
+
+What each engine fills: the ffmpeg engine fills both lists from ffprobe; the
+Android engine fills SubtitleStreams from MediaExtractor's text tracks and
+leaves Chapters EMPTY (the platform exposes none). Both default to empty lists,
+so an engine that knows nothing of them stays correct.
 
 Unknown values are 0 / null / Unspecified - never guessed.
 
@@ -445,7 +478,8 @@ IMPLEMENTING AN ENGINE
     2. Validate every request with its Validate() method before doing work.
     3. Build MediaInfo / VideoSourceInfo with object initializers; leave
        unknown values at 0 / null / Unspecified. Report RotationDegrees
-       CLOCKWISE, normalised to 0/90/180/270.
+       CLOCKWISE, normalised to 0/90/180/270. Fill SubtitleStreams and
+       Chapters when the platform shows them; otherwise leave them empty.
     4. Frame sources: deliver frames in stored orientation, at a constant rate,
        with Timestamp = Info.FrameRate.TimestampOf(FrameIndex). Reusing
        buffers between TryReadFrame calls is allowed (and expected).
@@ -463,6 +497,96 @@ IMPLEMENTING AN ENGINE
     7. Offer a static class named after the package with an idempotent,
        locked Register() that calls VideoProcessors.Register(instance) with ONE
        shared instance (see CodeBrixVideoProcessing.Register()).
+
+EXTERNAL TOOLS - CodeBrix.VideoProcessing.Core.Tools
+====================================================
+WHAT IT IS FOR: an engine that can run external command-line tools (the
+ffmpeg engine: ffmpeg, ffprobe, or any other tool) exposes them, so a consumer
+- for example a desktop authoring library that composes its own ffmpeg lines -
+can run those lines through the REGISTERED engine without referencing the
+engine's package. The consumer keeps the tool's vocabulary (its flags, filter
+graphs, progress parsing); this namespace only finds the tool and runs it.
+
+GETTING THEM (optional facet - NOT a member of IVideoProcessor):
+    if (engine.TryGetExternalTools(out IExternalTools tools)) { ... }
+        true ONLY when the engine reports VideoProcessorCapabilities.ExternalTools
+        AND implements IExternalToolHost with a non-null Tools.
+    IExternalTools tools = engine.RequireExternalTools("what needs them");
+        throws VideoProcessingException naming the engine and the operation.
+The Android engine never offers them.
+
+IExternalTools:
+    string BinaryFolder          looked in first; null / empty = PATH only
+    ExternalTool Locate(string toolName)          never throws for "missing"
+    ExternalToolResult Run(ExternalToolCommand command, CancellationToken ct = default)
+
+ExternalTool: Name, bool Found, string Path (full path or null),
+string LookedIn - text that completes "was looked for ...":
+"on the PATH" / "in '<folder>' and then on the PATH" /
+"in '<a>', then in '<b>', and then on the PATH". Use it in messages.
+
+ExternalToolArguments - THE QUOTING CONTRACT (pinned by tests; it is exactly
+how the ffmpeg package's ported argument builder renders, so recorded lines
+stay byte-identical):
+    Add(token)     appended VERBATIM: no quotes added, nothing escaped. A
+                   token may hold several words ("-map 0:v:0") or carry its
+                   own quotes (-vf "scale=w=64:h=48, format=yuv420p",
+                   title="A clip"); the caller owns them.
+    Add(null/"")   IGNORED - adds nothing, not even a separator.
+    AddPath(path)  appended as "<path>" - wrapped in double quotes, exactly as
+                   given (not made absolute, nothing inside escaped). A path
+                   containing a double quote, or ending in a backslash, cannot
+                   be rendered into a line the runner starts correctly, so it
+                   is REFUSED with ArgumentException naming the path and why.
+                   Null -> ArgumentNullException; "" -> ArgumentException.
+    AddRange(...)  Add for each token; null adds nothing.
+    Render()       tokens in order joined by ONE space; no leading / trailing
+                   space; no tokens -> "". ToString() == Render().
+    Count, Tokens  the rendered pieces (a path already in its quotes).
+
+ExternalToolCommand(toolName, arguments = null) with init properties:
+    WorkingDirectory       null / "" = current directory
+    OnStandardOutputLine   Action<string>, each line as it arrives, in order,
+    OnStandardErrorLine    on a background thread (ffmpeg writes progress to
+                           standard error). A stream WITH a callback is NOT
+                           captured into the result. A callback that throws
+                           stops the run (process killed) and its exception is
+                           rethrown by Run.
+    KillGracePeriod        on cancel, wait this long for the process to end on
+                           its own before killing it; default Zero = kill
+                           outright.
+
+ExternalToolResult: int ExitCode; bool Succeeded (ExitCode == 0);
+string RenderedCommand (tool path - in double quotes only when it contains
+whitespace - then a space and Render(); just the path when no arguments);
+string StandardOutput / StandardError (lines joined with "\n"; captured ONLY
+for a stream without a callback, else "").
+
+RULES OF A RUN (ExternalToolRunner - the ONE runner every engine delegates to):
+    * The process is started from the RENDERED string
+      (ProcessStartInfo.Arguments), so what is recorded is what ran.
+    * Both streams are drained concurrently, line by line, UTF-8 - a chatty
+      standard error never stalls the run. Standard input is closed at once.
+    * A NON-ZERO EXIT IS A RESULT, never an exception.
+    * CANCELLATION = KILL: the process and all its children are killed (after
+      KillGracePeriod), then OperationCanceledException is thrown. An
+      already-cancelled token throws before anything starts.
+    * Tool not found (IExternalTools.Run) or not startable
+      (ExternalToolRunner.Run) -> VideoProcessingException naming the tool and
+      where it was looked for / the path tried.
+    * No shared state: any number of runs at once, from any threads.
+
+ExternalToolLocator.Locate(name, binaryFolder) / Locate(name, folders): the
+folder(s) first (name, then name.exe on Windows - a file that exists is
+found), then each PATH entry (Windows: PATHEXT extensions; elsewhere the file
+must have an execute bit). A name containing a directory separator is checked
+as a path only. ExternalToolLocator.DescribeLookup(folders) gives LookedIn.
+
+IMPLEMENTING THE FACET in an engine: report ExternalTools, implement
+IExternalToolHost, and make Tools.Locate call ExternalToolLocator with your
+folder(s) and Tools.Run call ExternalToolRunner.Run with the located path -
+never write your own process code.
+
 
 ENCODERS - CodeBrix.VideoProcessing.Core.Encoding
 ================================================
@@ -642,6 +766,12 @@ COMMON PITFALLS
       again after Flush; skipping Flush loses the frames held back.
     * Expecting an encoder to split alpha off a frame - encode A as its own
       Gray stream.
+    * Testing "engine is IExternalToolHost" yourself - use
+      TryGetExternalTools, which also checks the capability flag.
+    * Expecting ExternalToolArguments to quote or escape for you - only
+      AddPath adds quotes; tokens are verbatim.
+    * Treating a non-zero exit as an exception - Run returns it; check
+      result.Succeeded.
 
 ================================================================================
 END OF AGENT-README

@@ -25,8 +25,12 @@ namespace CodeBrix.VideoProcessing.Android.Engine;
 /// CAPABILITIES (computed once, when the instance is created): RgbaInput, Nv12Input, GrayFrameSource, Snapshot,
 /// DirectTranscode, DirectTrim and DirectConcatenate always; HevcOutput when the device has a "video/hevc" encoder;
 /// HighBitDepthFrameSource when the device has a video decoder that lists P010 output
-/// (<see cref="HighBitDepthDecoders" />). Never AlphaFrameSource (Android's decoders expose no alpha) or
-/// I444FrameSource (they deliver 4:2:0).
+/// (<see cref="HighBitDepthDecoders" />). Never AlphaFrameSource (Android's decoders expose no alpha),
+/// I444FrameSource (they deliver 4:2:0) or ExternalTools (there are no command-line tools to run on Android).
+/// </para>
+/// <para>
+/// ANALYSE reports subtitle (timed text) tracks - for example an MP4's 3GPP timed text as "mov_text" - with their
+/// language; it reports no chapters, because the platform exposes none.
 /// </para>
 /// <para>
 /// BIT DEPTH: 8-bit frames are the default; a 10-bit source is then cut to 8 bits and says so through

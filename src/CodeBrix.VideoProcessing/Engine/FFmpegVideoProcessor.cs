@@ -9,6 +9,7 @@ using CodeBrix.VideoProcessing.Core;
 using CodeBrix.VideoProcessing.Core.Frames;
 using CodeBrix.VideoProcessing.Core.Media;
 using CodeBrix.VideoProcessing.Core.Output;
+using CodeBrix.VideoProcessing.Core.Tools;
 using CodeBrix.VideoProcessing.Exceptions;
 
 namespace CodeBrix.VideoProcessing.Engine;
@@ -29,7 +30,9 @@ namespace CodeBrix.VideoProcessing.Engine;
 /// format for and which <see cref="OpenVideo" /> refuses with <see cref="NotSupportedException" />) and 8-bit RGBA.
 /// The writer takes 8-bit I420 or RGBA frames only. HEVC output needs an ffmpeg
 /// built with libx265 (H.264 needs libx264); an ffmpeg without them fails the write with a
-/// <see cref="VideoProcessingException" /> naming the missing encoder.
+/// <see cref="VideoProcessingException" /> naming the missing encoder. It also reports
+/// <see cref="VideoProcessorCapabilities.ExternalTools" /> and offers its <see cref="Tools" /> (see
+/// <see cref="VideoProcessorExtensions.TryGetExternalTools" />).
 /// </para>
 /// <para>
 /// HOW: <see cref="Analyse" /> runs ffprobe; frame and sample sources and <see cref="Snapshot" /> run ffmpeg
@@ -38,7 +41,7 @@ namespace CodeBrix.VideoProcessing.Engine;
 /// single ffmpeg runs built with <see cref="FFMpegArguments" />.
 /// </para>
 /// </remarks>
-public sealed class FFmpegVideoProcessor : IVideoProcessor
+public sealed class FFmpegVideoProcessor : IVideoProcessor, IExternalToolHost
 {
     /// <summary>What this engine supports: every capability except <see cref="VideoProcessorCapabilities.Nv12Input" />.</summary>
     public const VideoProcessorCapabilities SupportedCapabilities =
@@ -51,7 +54,8 @@ public sealed class FFmpegVideoProcessor : IVideoProcessor
         VideoProcessorCapabilities.Snapshot |
         VideoProcessorCapabilities.I444FrameSource |
         VideoProcessorCapabilities.GrayFrameSource |
-        VideoProcessorCapabilities.HighBitDepthFrameSource;
+        VideoProcessorCapabilities.HighBitDepthFrameSource |
+        VideoProcessorCapabilities.ExternalTools;
 
     private readonly FFOptions options;
 
@@ -66,7 +70,16 @@ public sealed class FFmpegVideoProcessor : IVideoProcessor
     public FFmpegVideoProcessor(FFOptions options)
     {
         this.options = options;
+        Tools = new FFmpegExternalTools(() => Options);
     }
+
+    /// <summary>
+    /// The engine's external tools: ffmpeg, ffprobe (or any other tool) looked for in the engine's
+    /// <see cref="FFOptions.BinaryFolder" /> - read at each call, so a later <see cref="GlobalFFOptions.Configure(Action{FFOptions})" />
+    /// is seen - then on the PATH, and run through Core's <see cref="ExternalToolRunner" />. For consumers that run
+    /// their own command lines; the engine's own operations do not go through it.
+    /// </summary>
+    public IExternalTools Tools { get; }
 
     /// <summary>"ffmpeg".</summary>
     public string Name => "ffmpeg";

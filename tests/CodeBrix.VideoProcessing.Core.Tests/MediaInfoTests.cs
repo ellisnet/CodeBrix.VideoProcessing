@@ -25,6 +25,64 @@ public class MediaInfoTests
     }
 
     [Fact]
+    public void subtitles_and_chapters_are_empty_by_default_and_never_null()
+    {
+        //Act
+        var unset = new MediaInfo();
+        var nulled = new MediaInfo { SubtitleStreams = null, Chapters = null };
+
+        //Assert
+        unset.SubtitleStreams.Should().BeEmpty();
+        unset.Chapters.Should().BeEmpty();
+        unset.HasSubtitles.Should().BeFalse();
+        unset.HasChapters.Should().BeFalse();
+        nulled.SubtitleStreams.Should().BeEmpty();
+        nulled.Chapters.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void subtitles_and_chapters_are_reported_in_order()
+    {
+        //Arrange
+        var english = new SubtitleStreamInfo { Index = 2, CodecName = "mov_text", Language = "eng", Title = "English" };
+        var german = new SubtitleStreamInfo { Index = 3, CodecName = "mov_text", Language = "ger" };
+        var opening = new ChapterInfo { Index = 0, Start = TimeSpan.Zero, End = TimeSpan.FromSeconds(1), Title = "Opening" };
+        var closing = new ChapterInfo { Index = 1, Start = TimeSpan.FromSeconds(1), End = TimeSpan.FromSeconds(2) };
+
+        //Act
+        var info = new MediaInfo { SubtitleStreams = new[] { english, german }, Chapters = new[] { opening, closing } };
+
+        //Assert
+        info.HasSubtitles.Should().BeTrue();
+        info.HasChapters.Should().BeTrue();
+        info.SubtitleStreams.Should().Equal(english, german);
+        info.Chapters.Should().Equal(opening, closing);
+    }
+
+    [Fact]
+    public void subtitle_and_chapter_tags_are_case_insensitive_and_never_null()
+    {
+        //Act
+        var subtitle = new SubtitleStreamInfo { Tags = new Dictionary<string, string> { ["LANGUAGE"] = "eng" } };
+        var chapter = new ChapterInfo { Tags = new Dictionary<string, string> { ["Title"] = "One" } };
+
+        //Assert
+        subtitle.Tags["language"].Should().Be("eng");
+        chapter.Tags["title"].Should().Be("One");
+        new SubtitleStreamInfo { Tags = null }.Tags.Should().BeEmpty();
+        new ChapterInfo().Tags.Should().BeEmpty();
+        new SubtitleStreamInfo().Title.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(0, 1500, 1500)]
+    [InlineData(1000, 3000, 2000)]
+    [InlineData(3000, 1000, 0)]
+    public void a_chapter_duration_is_end_minus_start_and_never_negative(int startMs, int endMs, int expectedMs)
+        => new ChapterInfo { Start = TimeSpan.FromMilliseconds(startMs), End = TimeSpan.FromMilliseconds(endMs) }
+            .Duration.Should().Be(TimeSpan.FromMilliseconds(expectedMs));
+
+    [Fact]
     public void Tags_are_case_insensitive_copies()
     {
         //Arrange

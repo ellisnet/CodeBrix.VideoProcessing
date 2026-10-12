@@ -44,7 +44,7 @@ public interface IVideoProcessor
     /// <summary>The optional operations this engine supports.</summary>
     VideoProcessorCapabilities Capabilities { get; }
 
-    /// <summary>Describes a media file: its container, duration, video and audio streams, and tags.</summary>
+    /// <summary>Describes a media file: its container, duration, video, audio and subtitle streams, chapters, and tags.</summary>
     /// <param name="path">The file to analyse.</param>
     /// <param name="cancellationToken">Cancels the analysis.</param>
     /// <returns>The description of the file.</returns>

@@ -48,4 +48,43 @@ public class FFmpegProbeTests
         info.Tags["title"].Should().Be("x");
         info.Duration.TotalSeconds.Should().Be(1.5);
     }
+
+    [Fact]
+    public void Parse_maps_subtitle_streams_and_chapters_and_drops_placeholders()
+    {
+        //Arrange
+        const string json = """
+        {
+          "streams": [
+            { "index": 0, "codec_type": "video", "codec_name": "h264", "width": 64, "height": 48, "r_frame_rate": "25/1" },
+            { "index": 1, "codec_type": "subtitle", "codec_name": "webvtt", "tags": { "language": "ger", "title": "Deutsch" } },
+            { "index": 2, "codec_type": "subtitle", "codec_name": "ass", "tags": { "language": "und" } }
+          ],
+          "chapters": [
+            { "id": 7, "time_base": "1/1000", "start": 0, "start_time": "0:00:00.000000", "end": 1500, "end_time": "0:00:01.500000", "tags": { "title": "One" } },
+            { "id": 8, "time_base": "1/1000", "start": 1500, "start_time": "0:00:01.500000", "end": 3000, "end_time": "0:00:03.000000" }
+          ],
+          "format": { "format_name": "matroska,webm", "duration": "3.000000" }
+        }
+        """;
+
+        //Act
+        MediaInfo info = FFmpegProbe.Parse(json);
+
+        //Assert
+        info.SubtitleStreams.Should().HaveCount(2);
+        info.SubtitleStreams[0].Index.Should().Be(1);
+        info.SubtitleStreams[0].CodecName.Should().Be("webvtt");
+        info.SubtitleStreams[0].Language.Should().Be("ger");
+        info.SubtitleStreams[0].Title.Should().Be("Deutsch");
+        info.SubtitleStreams[1].Language.Should().BeNull();
+        info.SubtitleStreams[1].Title.Should().BeNull();
+        info.Chapters.Should().HaveCount(2);
+        info.Chapters[0].Title.Should().Be("One");
+        info.Chapters[0].End.TotalSeconds.Should().Be(1.5);
+        info.Chapters[1].Index.Should().Be(1);
+        info.Chapters[1].Title.Should().BeNull();
+        info.Chapters[1].Tags.Should().BeEmpty();
+        info.Chapters[1].Duration.TotalSeconds.Should().Be(1.5);
+    }
 }

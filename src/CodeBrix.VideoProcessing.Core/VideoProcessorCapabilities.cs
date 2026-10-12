@@ -80,5 +80,14 @@ public enum VideoProcessorCapabilities
     /// only: the standard MP4 writer is 8-bit. An engine may still refuse a particular layout / depth / alpha
     /// combination it cannot produce exactly, with a <see cref="NotSupportedException" /> naming it.
     /// </summary>
-    HighBitDepthFrameSource = 1 << 10
+    HighBitDepthFrameSource = 1 << 10,
+
+    /// <summary>
+    /// The engine can locate and run external command-line tools, and says where it looks for them: it implements
+    /// <see cref="Tools.IExternalToolHost" />, and <see cref="VideoProcessorExtensions.TryGetExternalTools" /> hands
+    /// out its <see cref="Tools.IExternalTools" />. A facet for consumers that run their OWN command lines (for
+    /// example a desktop authoring library) through whichever engine is registered, without referencing the engine's
+    /// package. No operation of <see cref="IVideoProcessor" /> depends on it.
+    /// </summary>
+    ExternalTools = 1 << 11
 }

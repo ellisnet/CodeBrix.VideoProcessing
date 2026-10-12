@@ -58,15 +58,17 @@ The `CodeBrix.VideoProcessing.MitLicenseForever` package pulls in two dependenci
 * A built-in process wrapper (`CodeBrix.VideoProcessing.Instances`)
 * An in-memory image bridge under `CodeBrix.VideoProcessing.Imaging`: grab a snapshot as a CodeBrix.Imaging image (`FFMpegImage.Snapshot`), feed images into FFmpeg as frames (`ImageVideoFrameWrapper`), or mux an image + audio into a video (`ImageExtensions.AddAudio`)
 * Serving as the Windows, Linux and macOS engine for CodeBrix.VideoProcessing.Core, registered with one call: `CodeBrixVideoProcessing.Register()`
+* Offering `ffmpeg`, `ffprobe` and other command-line tools through Core's external-tools facet, found in the configured binary folder and then on the `PATH`
 
 ## CodeBrix.VideoProcessing.Core supports:
 
 * One registry (`VideoProcessors`) and one interface (`IVideoProcessor`), so a library can process video without knowing which engine the application chose
-* Describing media files: container, duration, video streams (size, exact rational frame rate, bit depth, alpha, rotation, colour range / matrix / primaries / transfer) and audio streams
+* Describing media files: container, duration, video streams (size, exact rational frame rate, bit depth, alpha, rotation, colour range / matrix / primaries / transfer), audio streams, subtitle streams and chapters
 * Decoding video to I420 frames (and, where the engine offers it, NV12, RGBA, I444 or Gray frames at 8, 10 or 12 bits, with an optional alpha plane), and audio to interleaved 32-bit float samples, frame by frame with seeking
 * Writing standard MP4 files (H.264 or HEVC video with AAC audio) from your own frames and sound, at a constant frame rate, with constant-quality or target-bitrate encoding, keyframe interval, colour tags, rotation metadata and fast start
 * Whole-file transcode, trim (frame-accurate or keyframe-snapped) and lossless concatenation
 * Capability flags, so a consumer can ask an engine what it supports before calling it
+* An optional external-tools facet: an engine that can run command-line tools hands them out (`TryGetExternalTools`), so a library can run its own command lines through whichever engine is registered - one shared process runner, fixed argument quoting, cancellation that kills the process
 * An encoder registry (`VideoEncoders`) keyed by codec id, through which separate encoder packages plug in
 * Its own frame, plane, frame-rate and media-description types - no image library, no dependencies
 
@@ -74,7 +76,7 @@ The `CodeBrix.VideoProcessing.MitLicenseForever` package pulls in two dependenci
 
 * Serving as the Android engine for CodeBrix.VideoProcessing.Core, registered with one call: `CodeBrixVideoProcessingAndroid.Register()` - code written against the Core contract runs unchanged
 * Built on Android's own MediaExtractor, MediaCodec, MediaMuxer and MediaMetadataRetriever: no ffmpeg, no native code of its own
-* Describing media files, with the exact rational frame rate and frame count of MP4 / MOV files read from their sample tables
+* Describing media files, with the exact rational frame rate and frame count of MP4 / MOV files read from their sample tables, and their subtitle (timed text) tracks
 * Decoding video to 8-bit I420, NV12, RGBA or Gray frames at a constant frame rate with seeking, and audio to interleaved float at any sample rate and channel count
 * Decoding to 10-bit I420, NV12 or Gray frames on devices whose video decoders output P010, reported through the engine's capabilities
 * Writing standard MP4 files - H.264 (or HEVC on devices with an HEVC encoder) with AAC audio - from your own I420, NV12 or RGBA frames and sound, with a deterministic quality-to-bitrate mapping, keyframe interval, colour tags, rotation metadata, title and creation-time tags, and fast start

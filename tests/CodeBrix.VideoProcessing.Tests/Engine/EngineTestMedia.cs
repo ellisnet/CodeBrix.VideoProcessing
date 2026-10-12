@@ -37,6 +37,32 @@ internal static class EngineTestMedia
                   (path.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase) ? "-c:v ffv1" : "-c:v libx264 -pix_fmt yuv420p") +
                   $" \"{path}\"");
 
+    /// <summary>
+    /// A two-second H.264 + AAC Matroska clip with ONE SubRip subtitle stream (language "eng", title "English") and two
+    /// chapters ("Opening" 0-1 s, "Closing" 1-2 s). The cue and chapter text files are written next to it and deleted.
+    /// </summary>
+    public static void CreateClipWithSubtitlesAndChapters(string path)
+    {
+        string cues = path + ".srt";
+        string chapters = path + ".ffmeta";
+        File.WriteAllText(cues, "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n2\n00:00:01,000 --> 00:00:02,000\nWorld\n");
+        File.WriteAllText(chapters,
+            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=Opening\n" +
+            "[CHAPTER]\nTIMEBASE=1/1000\nSTART=1000\nEND=2000\ntitle=Closing\n");
+        try
+        {
+            RunFFmpeg("-f lavfi -i testsrc=size=160x120:rate=25:duration=2 -f lavfi -i sine=frequency=440:sample_rate=48000:duration=2 " +
+                      $"-i \"{cues}\" -i \"{chapters}\" -map 0:v -map 1:a -map 2:s -map_metadata 3 -map_chapters 3 " +
+                      "-c:v libx264 -pix_fmt yuv420p -c:a aac -c:s srt " +
+                      $"-metadata:s:s:0 language=eng -metadata:s:s:0 title=English \"{path}\"");
+        }
+        finally
+        {
+            File.Delete(cues);
+            File.Delete(chapters);
+        }
+    }
+
     /// <summary>One synthetic I420 frame: a diagonal luma ramp shifted by the frame index, neutral chroma.</summary>
     public static VideoFrameData I420Frame(int width, int height, long index)
     {

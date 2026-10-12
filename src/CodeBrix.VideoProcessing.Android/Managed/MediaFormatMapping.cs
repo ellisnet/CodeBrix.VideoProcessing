@@ -39,6 +39,11 @@ internal static class MediaFormatMapping
         ["audio/eac3"] = "eac3",
         ["audio/g711-alaw"] = "pcm_alaw",
         ["audio/g711-mlaw"] = "pcm_mulaw",
+        ["text/3gpp-tt"] = "mov_text",
+        ["text/vtt"] = "webvtt",
+        ["application/x-subrip"] = "subrip",
+        ["application/ttml+xml"] = "ttml",
+        ["text/cea-608"] = "eia_608",
     };
 
     // Well-known rational rates a float KEY_FRAME_RATE is snapped to.
@@ -292,8 +297,29 @@ internal static class MediaFormatMapping
     }
 
     /// <summary>
+    /// One subtitle track: the MediaExtractor track index, the codec name in ffmpeg's words (the MIME type itself when
+    /// unknown), the KEY_LANGUAGE (left out when absent or "und"), and the MIME type as the "mime" tag. The platform
+    /// reports no track title, so Title is null.
+    /// </summary>
+    internal static SubtitleStreamInfo MapSubtitle(TrackDescription track)
+    {
+        var tags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string language = string.IsNullOrEmpty(track.Language) || track.Language == "und" ? null : track.Language;
+        if (language != null) tags["language"] = language;
+        tags["mime"] = track.Mime;
+
+        return new SubtitleStreamInfo
+        {
+            Index = track.Index,
+            CodecName = CodecNameFromMime(track.Mime),
+            Language = language,
+            Tags = tags
+        };
+    }
+
+    /// <summary>
     /// The whole-file description: the container MIME, the duration (the retriever's, else the longest track), every
-    /// video and audio track in file order, and the container tags.
+    /// video, audio and subtitle track in file order, no chapters, and the container tags.
     /// </summary>
     internal static MediaInfo BuildMediaInfo(string containerMime, long containerDurationMilliseconds, IReadOnlyList<TrackDescription> tracks, IReadOnlyDictionary<string, string> tags)
     {
@@ -310,18 +336,22 @@ internal static class MediaFormatMapping
 
         var video = new List<VideoStreamInfo>();
         var audio = new List<AudioStreamInfo>();
+        var subtitles = new List<SubtitleStreamInfo>();
         foreach (TrackDescription track in tracks)
         {
             if (track.IsVideo) video.Add(MapVideo(track, duration));
             else if (track.IsAudio) audio.Add(MapAudio(track, duration));
+            else if (track.IsSubtitle) subtitles.Add(MapSubtitle(track));
         }
 
+        // Chapters stay empty: MediaExtractor and MediaMetadataRetriever expose no chapter list.
         return new MediaInfo
         {
             ContainerFormat = containerMime,
             Duration = duration,
             VideoStreams = video,
             AudioStreams = audio,
+            SubtitleStreams = subtitles,
             Tags = tags
         };
     }

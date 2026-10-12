@@ -73,4 +73,21 @@ internal sealed class TrackDescription
 
     /// <summary>True for an audio track (the MIME starts with "audio/").</summary>
     public bool IsAudio => Mime != null && Mime.StartsWith("audio/", System.StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True for a subtitle (timed text) track: the MIME starts with "text/" ("text/3gpp-tt", "text/vtt",
+    /// "text/cea-608", ...) or is one of the "application/" subtitle types ("application/x-subrip",
+    /// "application/ttml+xml"; see <see cref="SubtitleApplicationMimes" />).
+    /// </summary>
+    public bool IsSubtitle =>
+        Mime != null &&
+        (Mime.StartsWith("text/", System.StringComparison.OrdinalIgnoreCase) ||
+         System.Array.Exists(SubtitleApplicationMimes, m => string.Equals(m, Mime, System.StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>The subtitle MIME types that do not start with "text/".</summary>
+    internal static readonly string[] SubtitleApplicationMimes =
+    {
+        "application/x-subrip",
+        "application/ttml+xml",
+    };
 }

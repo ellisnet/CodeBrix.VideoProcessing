@@ -11,6 +11,7 @@ using CodeBrix.VideoProcessing.Core;
 using CodeBrix.VideoProcessing.Core.Frames;
 using CodeBrix.VideoProcessing.Core.Media;
 using CodeBrix.VideoProcessing.Core.Output;
+using CodeBrix.VideoProcessing.Core.Tools;
 using global::Android.App;
 using global::Android.OS;
 using global::Android.Widget;
@@ -25,8 +26,9 @@ namespace CodeBrix.VideoProcessing.Android.Diagnostics;
 /// CodeBrix.VideoProcessing.Core contract against the bundled synthetic clip and against files it writes itself -
 /// Analyse, Snapshot, OpenVideo in every offered layout with seeking, OpenAudio with resampling, CreateWriter
 /// (I420 / NV12 / RGBA input, HEVC when offered, fast start, tags), TrimFile both ways, ConcatenateFiles both ways,
-/// TranscodeFile, the capability refusals, cancellation and 10-bit (P010) frames from a bundled 10-bit HEVC ramp clip
-/// when the device offers them. One PASS / FAIL line per step and a final
+/// TranscodeFile, the capability refusals, cancellation, 10-bit (P010) frames from a bundled 10-bit HEVC ramp clip
+/// when the device offers them, and the subtitle survey of a bundled clip with a timed-text track (with the
+/// external-tools facet confirmed absent). One PASS / FAIL line per step and a final
 /// "VPDIAG RESULT:" line go to the screen and to logcat under the tag VPDiag.
 /// </summary>
 [Activity(Label = "CodeBrix Video Processing Diagnostics", MainLauncher = true, Exported = true)]
@@ -35,6 +37,7 @@ public sealed class MainActivity : Activity
     private const string LogTag = "VPDiag";
     private const string ClipName = "clip-h264-aac.mp4";
     private const string Clip10Name = "clip-hevc10-aac.mp4";
+    private const string ClipSubtitleName = "clip-h264-aac-srt.mp4";
 
     private TextView _log = null;
     private ScrollView _scroll = null;
@@ -43,6 +46,7 @@ public sealed class MainActivity : Activity
     private string _work = null;
     private string _clip = null;
     private string _clip10 = null;
+    private string _clipSubtitle = null;
     private readonly List<string> _failures = new List<string>();
     private readonly List<string> _notes = new List<string>();
     private int _passed;
@@ -162,6 +166,13 @@ public sealed class MainActivity : Activity
         _clip10 = Out(Clip10Name);
         using (Stream asset = Assets.Open(Clip10Name))
         using (FileStream file = File.Create(_clip10))
+        {
+            asset.CopyTo(file);
+        }
+
+        _clipSubtitle = Out(ClipSubtitleName);
+        using (Stream asset = Assets.Open(ClipSubtitleName))
+        using (FileStream file = File.Create(_clipSubtitle))
         {
             asset.CopyTo(file);
         }
@@ -549,6 +560,27 @@ public sealed class MainActivity : Activity
         });
 
         TenBitSteps(engine);
+
+        // Step 23: the engine-neutral subtitle survey, and the external-tools facet the Android engine does not offer.
+        // The bundled clip-h264-aac-srt.mp4 carries ONE 3GPP timed-text (mov_text) track, language "eng", no chapters.
+        Step("23", "Analyse subtitles + no external tools", () =>
+        {
+            MediaInfo info = engine.Analyse(_clipSubtitle);
+            Check(info.SubtitleStreams.Count == 1, "one subtitle stream (got " + info.SubtitleStreams.Count + ")");
+            SubtitleStreamInfo s = info.SubtitleStreams[0];
+            Check(info.HasSubtitles, "HasSubtitles");
+            Check(s.CodecName == "mov_text", "codec mov_text (got " + s.CodecName + ", mime " + (s.Tags.TryGetValue("mime", out string mime) ? mime : "?") + ")");
+            Check(s.Language == "eng", "language eng (got " + (s.Language ?? "null") + ")");
+            Check(info.Chapters.Count == 0 && !info.HasChapters, "no chapters");
+            Check(info.PrimaryVideo != null && info.PrimaryAudio != null, "video and audio still reported");
+            MediaInfo plain = engine.Analyse(_clip);
+            Check(plain.SubtitleStreams.Count == 0 && plain.Chapters.Count == 0, "the plain clip has no subtitles and no chapters");
+            Check(!engine.Supports(VideoProcessorCapabilities.ExternalTools), "ExternalTools not reported");
+            Check(!engine.TryGetExternalTools(out IExternalTools tools) && tools == null, "TryGetExternalTools is false");
+            Check(engine is not IExternalToolHost, "the engine is not an IExternalToolHost");
+            Check(Throws<VideoProcessingException>(() => engine.RequireExternalTools("the diagnostics")), "RequireExternalTools refuses");
+            return $"subtitle stream index {s.Index} {s.CodecName} language {s.Language} tags [{string.Join(", ", s.Tags.Select(t => t.Key + "=" + t.Value))}]; chapters 0; TryGetExternalTools false";
+        });
 
         Report();
     }

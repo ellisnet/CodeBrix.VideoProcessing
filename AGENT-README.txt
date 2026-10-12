@@ -2451,7 +2451,8 @@ CodeBrixVideoProcessing (static, in the root namespace):
     bool IsRegistered
     FFmpegVideoProcessor Processor   the single registered instance
 
-FFmpegVideoProcessor (CodeBrix.VideoProcessing.Engine) : IVideoProcessor
+FFmpegVideoProcessor (CodeBrix.VideoProcessing.Engine) : IVideoProcessor,
+                                                          IExternalToolHost
     new FFmpegVideoProcessor()                 uses GlobalFFOptions.Current,
                                                read at each operation
     new FFmpegVideoProcessor(FFOptions opts)   its own options (binary folder,
@@ -2460,7 +2461,8 @@ FFmpegVideoProcessor (CodeBrix.VideoProcessing.Engine) : IVideoProcessor
     Capabilities == SupportedCapabilities == everything EXCEPT Nv12Input:
         AlphaFrameSource | RgbaInput | HevcOutput | DirectTranscode |
         DirectTrim | DirectConcatenate | Snapshot | I444FrameSource |
-        GrayFrameSource | HighBitDepthFrameSource
+        GrayFrameSource | HighBitDepthFrameSource | ExternalTools
+    IExternalTools Tools            the external-tools facet (see below)
 Construct one directly only when it needs its own FFOptions; otherwise use
 Register() and VideoProcessors.Current.
 
@@ -2474,7 +2476,13 @@ How each contract member is carried out:
                              CLOCKWISE from the display matrix (or the legacy
                              rotate tag); colour fields mapped from ffprobe's
                              names. Attached pictures (cover art) are not
-                             listed as video streams.
+                             listed as video streams. SubtitleStreams: every
+                             subtitle stream (Index, ffprobe's codec_name,
+                             Language from the language tag - "und" -> null -
+                             Title from the title tag, Tags). Chapters: every
+                             chapter in order (Index 0.., Start, End, Title;
+                             Tags carry the title only - the ported model
+                             keeps no other chapter tags).
     OpenVideo                ffmpeg decodes the FIRST video stream to raw frames
                              on its standard output: -noautorotate (frames stay
                              in stored orientation), an fps filter at the
@@ -2557,6 +2565,28 @@ naming FFOptions.BinaryFolder. A failed or cancelled operation deletes its
 partial output.
 Encoders required at runtime: libx264 (always), libx265 (HEVC), aac (audio) -
 the usual Linux distribution, Homebrew and gyan.dev builds have all three.
+
+THE EXTERNAL-TOOLS FACET (Core's CodeBrix.VideoProcessing.Core.Tools):
+The engine reports VideoProcessorCapabilities.ExternalTools and offers
+IExternalTools through engine.TryGetExternalTools(out tools) - for consumers
+(for example a desktop authoring library) that compose their OWN ffmpeg /
+ffprobe lines and must not reference this package. The contract (quoting
+rules, cancellation = kill, non-zero exit = result) is in Core's AGENT-README.
+    tools.BinaryFolder   the engine's FFOptions.BinaryFolder, read LIVE (its
+                         own FFOptions, else GlobalFFOptions.Current), so a
+                         later GlobalFFOptions.Configure(o => o.BinaryFolder
+                         = ...) is seen. Empty = PATH only.
+    tools.Locate(name)   the SAME places the ported operations use
+                         (GlobalFFOptions.GetFFMpegBinaryPath): <folder>/x64
+                         (x86 in a 32-bit process), then <folder>, then the
+                         PATH. LookedIn names them.
+    tools.Run(command)   Locate, then Core's ExternalToolRunner. A tool that
+                         is not found throws VideoProcessingException naming
+                         it, where it was looked for and
+                         GlobalFFOptions.Configure(o => o.BinaryFolder = ...).
+The package's OWN operations (the FFMpegArguments / FFProbe port and the
+engine's readers and writer) do NOT go through the facet: they keep their own
+process runners, unchanged.
 
 
 COMMON PITFALLS TO AVOID

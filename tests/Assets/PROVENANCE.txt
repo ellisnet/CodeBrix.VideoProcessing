@@ -51,3 +51,40 @@ clip-hevc10-aac.mp4
     the 10-bit steps 20-21) and tests/CodeBrix.VideoProcessing.Android.Tests
     (the P010 reader is checked bit-exact against the host ffmpeg's decode of
     its first frame).
+
+clip-h264-aac-srt.mp4
+    A SYNTHETIC clip: no camera footage, no recording, no third-party content.
+    Picture: ffmpeg's built-in "testsrc2" pattern generator. Sound: ffmpeg's
+    built-in "sine" generator (a 440 Hz tone). Subtitles: two cues typed for
+    this repository ("First caption" 0-1 s, "Second caption" 1-2 s). Licence:
+    none needed - generated for this repository and dedicated to the public
+    domain (CC0-1.0) by its author.
+    Content: 2 s, 320x240, 30 fps (60 frames), H.264 High 4:2:0 8-bit, a
+    keyframe every 30 frames, 2 B-frames; AAC-LC stereo 48 kHz 96 kbit/s; ONE
+    3GPP timed-text (mov_text) subtitle track, language "eng"; no chapters;
+    moov before mdat; no container metadata tags.
+    Made with the Debian ffmpeg (7.1) of the development laptop, from a cues.srt
+    holding exactly:
+
+        1
+        00:00:00,000 --> 00:00:01,000
+        First caption
+
+        2
+        00:00:01,000 --> 00:00:02,000
+        Second caption
+
+    ffmpeg -f lavfi -i testsrc2=size=320x240:rate=30:duration=2 \
+           -f lavfi -i sine=frequency=440:sample_rate=48000:duration=2 \
+           -i cues.srt -map 0:v -map 1:a -map 2:s \
+           -c:v libx264 -profile:v high -pix_fmt yuv420p -g 30 -keyint_min 30 \
+           -sc_threshold 0 -bf 2 -crf 23 \
+           -c:a aac -b:a 96k -ac 2 \
+           -c:s mov_text -metadata:s:s:0 language=eng \
+           -map_metadata -1 -map_chapters -1 -fflags +bitexact -flags:v +bitexact \
+           -flags:a +bitexact -movflags +faststart clip-h264-aac-srt.mp4
+
+    Used by: samples/VideoProcessingDiagnostics (bundled as an Android asset;
+    the subtitle-survey step: Analyse must report one subtitle stream) and
+    tests/CodeBrix.VideoProcessing.Tests (the ffmpeg engine's Analyse reports
+    the same track).
