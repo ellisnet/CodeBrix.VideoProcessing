@@ -10,9 +10,10 @@ namespace CodeBrix.VideoProcessing.Android.Engine;
 
 /// <summary>
 /// Copies pictures between codec buffers and tightly packed managed I420: through the Image API (any plane layout -
-/// planar, semi-planar, with or without row padding, 8-bit YUV_420_888 or 16-bit P010 which is cut to its top 8 bits),
-/// or through a raw ByteBuffer for the two classic layouts (COLOR_FormatYUV420Planar / SemiPlanar) when a codec offers
-/// no Image.
+/// planar, semi-planar, with or without row padding, 8-bit YUV_420_888 or 16-bit P010), or through a raw ByteBuffer
+/// for the two classic layouts (COLOR_FormatYUV420Planar / SemiPlanar) and P010 when a codec offers no Image. 8-bit
+/// output (<see cref="ReadI420" />) cuts P010 to its top 8 bits; 10-bit output (<see cref="ReadI420Deep" />) keeps
+/// all ten, in the contract's low bits.
 /// </summary>
 internal static class AndroidImageCopy
 {
@@ -35,6 +36,58 @@ internal static class AndroidImageCopy
         ReadPlane(planes[0], left, top, visibleWidth, visibleHeight, bytesPerSample, destination, 0, width);
         ReadPlane(planes[1], left / 2, top / 2, (visibleWidth + 1) / 2, (visibleHeight + 1) / 2, bytesPerSample, destination, luma, chromaWidth);
         ReadPlane(planes[2], left / 2, top / 2, (visibleWidth + 1) / 2, (visibleHeight + 1) / 2, bytesPerSample, destination, luma + chroma, chromaWidth);
+    }
+
+    /// <summary>True when a decoder output Image holds P010 (10-bit) samples.</summary>
+    internal static bool IsP010(Image image) => (int)image.Format == MediaFormatKeys.ImageFormatYcbcrP010;
+
+    /// <summary>
+    /// Reads the visible picture of a decoder output Image into a tightly packed 10-bit I420 buffer of width x height
+    /// (two bytes per sample, little-endian, value in the low bits): a P010 Image is shifted down by 6, an 8-bit Image
+    /// is widened by 2 bits. Any plane layout (planar or semi-planar, with or without row padding).
+    /// </summary>
+    internal static void ReadI420Deep(Image image, int width, int height, byte[] destination)
+    {
+        Image.Plane[] planes = image.GetPlanes();
+        if (planes == null || planes.Length < 3) throw new VideoProcessingException($"The decoder's output image has {planes?.Length ?? 0} planes; YUV 4:2:0 needs 3.");
+
+        int bytesPerSample = IsP010(image) ? 2 : 1;
+        Rect crop = image.CropRect;
+        int left = crop?.Left ?? 0;
+        int top = crop?.Top ?? 0;
+        int visibleWidth = Math.Min(width, (crop != null && crop.Width() > 0 ? crop.Width() : image.Width));
+        int visibleHeight = Math.Min(height, (crop != null && crop.Height() > 0 ? crop.Height() : image.Height));
+
+        int chromaWidth = (width + 1) / 2;
+        int luma = width * height;
+        int chroma = chromaWidth * ((height + 1) / 2);
+        ReadPlaneDeep(planes[0], left, top, visibleWidth, visibleHeight, bytesPerSample, destination, 0, width);
+        ReadPlaneDeep(planes[1], left / 2, top / 2, (visibleWidth + 1) / 2, (visibleHeight + 1) / 2, bytesPerSample, destination, 2 * luma, chromaWidth);
+        ReadPlaneDeep(planes[2], left / 2, top / 2, (visibleWidth + 1) / 2, (visibleHeight + 1) / 2, bytesPerSample, destination, 2 * (luma + chroma), chromaWidth);
+    }
+
+    /// <summary>
+    /// Reads a decoder output ByteBuffer laid out as COLOR_FormatYUVP010 (Y, then interleaved Cb/Cr, 16-bit samples,
+    /// the format's stride and slice height) into tightly packed 10-bit I420.
+    /// </summary>
+    internal static void ReadP010FromBuffer(ByteBuffer buffer, int offset, MediaFormat format, int width, int height, byte[] destination)
+    {
+        int stride = AndroidMedia.GetInt(format, MediaFormatKeys.Stride, 2 * width);
+        int sliceHeight = AndroidMedia.GetInt(format, MediaFormatKeys.SliceHeight, height);
+        int left = Math.Max(0, AndroidMedia.GetInt(format, MediaFormatKeys.CropLeft, 0));
+        int top = Math.Max(0, AndroidMedia.GetInt(format, MediaFormatKeys.CropTop, 0));
+        int start = buffer.Position();
+        int length = buffer.Limit() - start;
+        byte[] bytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, length));
+        try
+        {
+            AndroidMedia.CopyFrom(buffer, start, bytes, 0, length);
+            HighBitDepthConversion.ReadP010Buffer(new ReadOnlySpan<byte>(bytes, 0, length), Math.Max(0, offset - start), stride, sliceHeight, left, top, width, height, destination);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(bytes);
+        }
     }
 
     /// <summary>Writes a tightly packed I420 picture into an encoder input Image.</summary>
@@ -153,6 +206,27 @@ internal static class AndroidImageCopy
         finally
         {
             ArrayPool<byte>.Shared.Return(scratch);
+        }
+    }
+
+    // Copies the plane's bytes (from the buffer's position to its limit) once, then converts them with the managed
+    // reader the host tests prove: P010 words shifted down to the low bits, 8-bit samples widened.
+    private static void ReadPlaneDeep(Image.Plane plane, int x0, int y0, int width, int height, int bytesPerSample, byte[] destination, int destinationOffset, int destinationWidth)
+    {
+        ByteBuffer buffer = plane.Buffer;
+        int start = buffer.Position();
+        int length = buffer.Limit() - start;
+        if (length <= 0) return;
+        byte[] bytes = ArrayPool<byte>.Shared.Rent(length);
+        try
+        {
+            AndroidMedia.CopyFrom(buffer, start, bytes, 0, length);
+            HighBitDepthConversion.ReadPlane(new ReadOnlySpan<byte>(bytes, 0, length), 0, plane.RowStride, plane.PixelStride, bytesPerSample,
+                x0, y0, width, height, destination, destinationOffset, destinationWidth);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(bytes);
         }
     }
 

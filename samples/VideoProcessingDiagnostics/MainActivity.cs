@@ -25,7 +25,8 @@ namespace CodeBrix.VideoProcessing.Android.Diagnostics;
 /// CodeBrix.VideoProcessing.Core contract against the bundled synthetic clip and against files it writes itself -
 /// Analyse, Snapshot, OpenVideo in every offered layout with seeking, OpenAudio with resampling, CreateWriter
 /// (I420 / NV12 / RGBA input, HEVC when offered, fast start, tags), TrimFile both ways, ConcatenateFiles both ways,
-/// TranscodeFile, the capability refusals and cancellation. One PASS / FAIL line per step and a final
+/// TranscodeFile, the capability refusals, cancellation and 10-bit (P010) frames from a bundled 10-bit HEVC ramp clip
+/// when the device offers them. One PASS / FAIL line per step and a final
 /// "VPDIAG RESULT:" line go to the screen and to logcat under the tag VPDiag.
 /// </summary>
 [Activity(Label = "CodeBrix Video Processing Diagnostics", MainLauncher = true, Exported = true)]
@@ -33,6 +34,7 @@ public sealed class MainActivity : Activity
 {
     private const string LogTag = "VPDiag";
     private const string ClipName = "clip-h264-aac.mp4";
+    private const string Clip10Name = "clip-hevc10-aac.mp4";
 
     private TextView _log = null;
     private ScrollView _scroll = null;
@@ -40,6 +42,7 @@ public sealed class MainActivity : Activity
     private int _running;
     private string _work = null;
     private string _clip = null;
+    private string _clip10 = null;
     private readonly List<string> _failures = new List<string>();
     private readonly List<string> _notes = new List<string>();
     private int _passed;
@@ -156,6 +159,13 @@ public sealed class MainActivity : Activity
             asset.CopyTo(file);
         }
 
+        _clip10 = Out(Clip10Name);
+        using (Stream asset = Assets.Open(Clip10Name))
+        using (FileStream file = File.Create(_clip10))
+        {
+            asset.CopyTo(file);
+        }
+
         IVideoProcessor engine = null;
 
         Step("01", "Register", () =>
@@ -176,6 +186,8 @@ public sealed class MainActivity : Activity
         }
 
         CodecProbe(engine);
+        IReadOnlyList<string> p010Decoders = CodeBrixVideoProcessingAndroid.Processor.HighBitDepthDecoders;
+        Log($"VPDiag 10-bit probe: HighBitDepthFrameSource {(engine.Supports(VideoProcessorCapabilities.HighBitDepthFrameSource) ? "SET" : "not set")}; video decoders listing P010: {(p010Decoders.Count == 0 ? "none" : string.Join(", ", p010Decoders))}");
 
         Step("02", "Analyse", () =>
         {
@@ -501,10 +513,14 @@ public sealed class MainActivity : Activity
         Step("18", "Capability refusals", () =>
         {
             var refused = new List<string>();
+            bool deep = engine.Supports(VideoProcessorCapabilities.HighBitDepthFrameSource);
             if (Throws<NotSupportedException>(() => engine.OpenVideo(_clip, new VideoSourceOptions { PixelLayout = VideoPixelLayout.I444 }).Dispose())) refused.Add("I444");
-            if (Throws<NotSupportedException>(() => engine.OpenVideo(_clip, new VideoSourceOptions { BitDepth = 10 }).Dispose())) refused.Add("10-bit");
+            // With HighBitDepthFrameSource 10 bits are offered (steps 20-22) and 12 bits are refused by the engine;
+            // without it the gate refuses 10 bits.
+            if (deep && Throws<NotSupportedException>(() => engine.OpenVideo(_clip, new VideoSourceOptions { BitDepth = 12 }).Dispose())) refused.Add("12-bit");
+            if (!deep && Throws<NotSupportedException>(() => engine.OpenVideo(_clip, new VideoSourceOptions { BitDepth = 10 }).Dispose())) refused.Add("10-bit");
             if (Throws<NotSupportedException>(() => engine.OpenVideo(_clip, new VideoSourceOptions { IncludeAlpha = true }).Dispose())) refused.Add("alpha");
-            Check(refused.Count == 3, "I444, 10-bit and alpha refused (refused: " + string.Join(",", refused) + ")");
+            Check(refused.Count == 3, "I444, " + (deep ? "12-bit" : "10-bit") + " and alpha refused (refused: " + string.Join(",", refused) + ")");
             Check(Throws<FileNotFoundException>(() => engine.Analyse(Out("missing.mp4"))), "missing file -> FileNotFoundException");
             File.WriteAllText(Out("not-media.mp4"), "this is not media");
             Check(Throws<MediaFormatException>(() => engine.Analyse(Out("not-media.mp4"))), "garbage -> MediaFormatException");
@@ -532,7 +548,268 @@ public sealed class MainActivity : Activity
             return "TranscodeFile cancelled after 10 frames; partial output deleted";
         });
 
+        TenBitSteps(engine);
+
         Report();
+    }
+
+    // Steps 20-22: 10-bit (P010) frames. The bundled clip-hevc10-aac.mp4 is HEVC Main10, 320x180, 90 identical
+    // frames whose luma is a ramp of 960 distinct 10-bit levels (64..1023: three 60-row bands, each column +1 level),
+    // chroma 512; an 8-bit cut can resolve at most 240 of them. Without HighBitDepthFrameSource the steps check the
+    // refusal and pass with a note.
+    private void TenBitSteps(IVideoProcessor engine)
+    {
+        const int width = 320, height = 180;
+        bool deep = engine.Supports(VideoProcessorCapabilities.HighBitDepthFrameSource);
+        string absent = "HighBitDepthFrameSource is not offered on this device (no video decoder lists P010); BitDepth = 10 was refused with NotSupportedException as the contract says";
+        string refusedHere = null;
+        string referenceHash = null;
+
+        Step("20", "OpenVideo I420 10-bit", () =>
+        {
+            if (!deep)
+            {
+                Check(Throws<NotSupportedException>(() => engine.OpenVideo(_clip10, new VideoSourceOptions { BitDepth = 10 }).Dispose()), "10-bit refused without the capability");
+                return "NOTE: " + absent;
+            }
+
+            IVideoFrameSource source;
+            try
+            {
+                source = engine.OpenVideo(_clip10, new VideoSourceOptions { BitDepth = 10 });
+            }
+            catch (NotSupportedException ex)
+            {
+                refusedHere = ex.Message;
+                return "NOTE: the capability is set but the decoder refused P010 for this stream: " + ex.Message;
+            }
+
+            using (source)
+            {
+                VideoSourceInfo info = source.Info;
+                Check(info.BitDepth == 10 && info.SourceBitDepth == 10 && !info.IsBitDepthReduced, $"Info 10-bit from a 10-bit source (BitDepth {info.BitDepth}, SourceBitDepth {info.SourceBitDepth})");
+                Check(info.PixelLayout == VideoPixelLayout.I420 && info.Width == width && info.Height == height, "I420 320x180");
+                long count = 0;
+                byte[] first = null;
+                string firstHash = null;
+                int levels = 0, cutLevels = 0, maximum = 0;
+                string samples = null;
+                while (source.TryReadFrame(out VideoFrameData frame))
+                {
+                    Check(frame.BitDepth == 10 && frame.BytesPerSample == 2, "10-bit frames");
+                    Check(frame.FrameIndex == count && frame.Timestamp == info.FrameRate.TimestampOf(count), "consecutive indexes and timestamps");
+                    Check(frame.Y.RowLength == 2 * width && frame.Y.Rows == height && frame.U.RowLength == width && frame.U.Rows == height / 2 && frame.V.RowLength == width, "10-bit plane sizes");
+                    byte[] packed = Pack(frame);
+                    if (count == 0)
+                    {
+                        first = packed;
+                        firstHash = Fnv1a(packed);
+                        referenceHash = firstHash;
+                        RampLevels(frame.Y, width, out levels, out cutLevels);
+                        maximum = MaximumSample(packed);
+                        samples = $"Y(0,30)={Sample16(frame.Y, 0, 30)} Y(1,30)={Sample16(frame.Y, 1, 30)} Y(319,90)={Sample16(frame.Y, 319, 90)} Y(319,150)={Sample16(frame.Y, 319, 150)} U(0,0)={Sample16(frame.U, 0, 0)} V(0,0)={Sample16(frame.V, 0, 0)}";
+                        File.WriteAllBytes(Out("frame0-i420-10bit.raw"), packed);
+                        Copy(Out("frame0-i420-10bit.raw"));
+                    }
+                    else if (count % 15 == 0 || count == 89)
+                    {
+                        Check(packed.AsSpan().SequenceEqual(first), "frame " + count + " equals frame 0 (the clip is static and lossless)");
+                    }
+
+                    count++;
+                }
+
+                Check(count == 90, "90 frames (got " + count + ")");
+                Check(maximum <= 1023, "samples in the low 10 bits (largest " + maximum + ")");
+                Check(levels >= 900, "the ramp resolves at least 900 levels (got " + levels + "; an 8-bit cut gives at most 256)");
+                Check(Sample16(Plane0(first, width, height), 0, 30) == 64 && Sample16(Plane0(first, width, height), 319, 150) == 1023, "ramp end points 64 and 1023");
+
+                // The default 8-bit delivery of the same clip: the reduction is reported, and every sample is the
+                // 10-bit sample's top 8 bits (value >> 2).
+                using IVideoFrameSource eight = engine.OpenVideo(_clip10);
+                Check(eight.TryReadFrame(out VideoFrameData cut), "an 8-bit frame of the same clip");
+                Check(eight.Info.BitDepth == 8 && eight.Info.SourceBitDepth == 10 && eight.Info.IsBitDepthReduced, "8-bit delivery reports the reduction");
+                int eightLevels = DistinctBytes(cut.Y, new[] { 30, 90, 150 });
+                Check(eightLevels <= 256, "the 8-bit delivery has at most 256 levels (got " + eightLevels + ")");
+                byte[] cutY = cut.Y.ToArray();
+                int cutMismatches = 0;
+                for (int i = 0; i < cutY.Length; i++)
+                {
+                    if (cutY[i] != ((first[2 * i] | (first[2 * i + 1] << 8)) >> 2)) cutMismatches++;
+                }
+
+                Check(cutMismatches == 0, "8-bit Y = 10-bit Y >> 2 (" + cutMismatches + " samples differ)");
+                return $"{count} frames 10-bit, ramp {levels} distinct levels (8-bit cut of the same samples {cutLevels}; 8-bit delivery {eightLevels}), largest sample {maximum}, frame 0 FNV-1a {firstHash}, {samples}";
+            }
+        });
+
+        Step("21", "OpenVideo Gray + NV12 10-bit", () =>
+        {
+            if (!deep) return "NOTE: " + absent;
+            if (refusedHere != null) return "NOTE: step 20's refusal applies: " + refusedHere;
+            using IVideoFrameSource i420 = engine.OpenVideo(_clip10, new VideoSourceOptions { BitDepth = 10 });
+            using IVideoFrameSource gray = engine.OpenVideo(_clip10, new VideoSourceOptions { BitDepth = 10, PixelLayout = VideoPixelLayout.Gray });
+            using IVideoFrameSource nv12 = engine.OpenVideo(_clip10, new VideoSourceOptions { BitDepth = 10, PixelLayout = VideoPixelLayout.Nv12 });
+            Check(gray.Info.BitDepth == 10 && nv12.Info.BitDepth == 10, "Info 10-bit");
+            long count = 0;
+            while (i420.TryReadFrame(out VideoFrameData c))
+            {
+                Check(gray.TryReadFrame(out VideoFrameData g), "Gray keeps pace");
+                Check(nv12.TryReadFrame(out VideoFrameData n), "NV12 keeps pace");
+                Check(g.Layout == VideoPixelLayout.Gray && g.BitDepth == 10 && g.U.IsEmpty, "10-bit Gray, no chroma");
+                Check(n.Layout == VideoPixelLayout.Nv12 && n.BitDepth == 10 && n.UV.RowLength == 2 * width && n.UV.Rows == height / 2, "10-bit NV12 planes");
+                if (count == 0 && referenceHash != null) Check(Fnv1a(Pack(c)) == referenceHash, "I420 frame 0 equals step 20's frame 0");
+                if (count % 10 == 0)
+                {
+                    byte[] y = c.Y.ToArray();
+                    Check(g.Y.ToArray().AsSpan().SequenceEqual(y), "Gray Y equals I420 Y at frame " + count + " (" + Difference(g.Y.ToArray(), y) + ")");
+                    Check(n.Y.ToArray().AsSpan().SequenceEqual(y), "NV12 Y equals I420 Y at frame " + count + " (" + Difference(n.Y.ToArray(), y) + ")");
+                    for (int row = 0; row < height / 2; row++)
+                    {
+                        ReadOnlySpan<byte> uv = n.UV.GetRow(row);
+                        ReadOnlySpan<byte> u = c.U.GetRow(row);
+                        ReadOnlySpan<byte> v = c.V.GetRow(row);
+                        for (int x = 0; x < width / 2; x++)
+                        {
+                            if (uv[4 * x] != u[2 * x] || uv[4 * x + 1] != u[2 * x + 1] || uv[4 * x + 2] != v[2 * x] || uv[4 * x + 3] != v[2 * x + 1])
+                                throw new InvalidOperationException($"check failed: NV12 UV interleaves I420 U / V (row {row}, column {x}, frame {count})");
+                        }
+                    }
+                }
+
+                count++;
+            }
+
+            Check(count == 90, "90 frames (got " + count + ")");
+            return $"{count} frames: 10-bit Gray Y and NV12 Y identical to I420's, NV12 UV = U / V interleaved sample by sample";
+        });
+
+        Step("22", "OpenVideo 10-bit from an 8-bit source", () =>
+        {
+            if (!deep)
+            {
+                Check(Throws<NotSupportedException>(() => engine.OpenVideo(_clip, new VideoSourceOptions { BitDepth = 10 }).Dispose()), "10-bit refused without the capability");
+                return "NOTE: " + absent;
+            }
+
+            using IVideoFrameSource wide = engine.OpenVideo(_clip, new VideoSourceOptions { BitDepth = 10 });
+            using IVideoFrameSource narrow = engine.OpenVideo(_clip);
+            Check(wide.Info.BitDepth == 10 && wide.Info.SourceBitDepth == 8 && !wide.Info.IsBitDepthReduced, $"Info 10-bit from an 8-bit source (SourceBitDepth {wide.Info.SourceBitDepth})");
+            long count = 0;
+            while (wide.TryReadFrame(out VideoFrameData w))
+            {
+                Check(narrow.TryReadFrame(out VideoFrameData n), "8-bit source keeps pace");
+                Check(w.BitDepth == 10 && w.Y.RowLength == 640, "10-bit frame");
+                if (count % 10 == 0)
+                {
+                    CheckWidened(n.Y, w.Y, "Y", count);
+                    CheckWidened(n.U, w.U, "U", count);
+                    CheckWidened(n.V, w.V, "V", count);
+                }
+
+                count++;
+            }
+
+            Check(count == 120, "120 frames (got " + count + ")");
+            return $"{count} frames; every checked 10-bit sample is the 8-bit sample << 2 (SourceBitDepth 8, IsBitDepthReduced false)";
+        });
+    }
+
+    // Tightly packed Y, U, V of a frame.
+    private static byte[] Pack(VideoFrameData frame)
+    {
+        byte[] y = frame.Y.ToArray(), u = frame.U.ToArray(), v = frame.V.ToArray();
+        byte[] all = new byte[y.Length + u.Length + v.Length];
+        y.CopyTo(all, 0);
+        u.CopyTo(all, y.Length);
+        v.CopyTo(all, y.Length + u.Length);
+        return all;
+    }
+
+    private static VideoPlane Plane0(byte[] packed, int width, int height) => new VideoPlane(packed, 2 * width, 2 * width, height);
+
+    private static int Sample16(VideoPlane plane, int x, int y)
+    {
+        ReadOnlySpan<byte> row = plane.GetRow(y);
+        return row[2 * x] | (row[2 * x + 1] << 8);
+    }
+
+    private static int MaximumSample(byte[] packed)
+    {
+        int maximum = 0;
+        for (int i = 0; i + 1 < packed.Length; i += 2) maximum = Math.Max(maximum, packed[i] | (packed[i + 1] << 8));
+        return maximum;
+    }
+
+    // Distinct 10-bit levels over the middle row of each ramp band, and how many survive a cut to 8 bits.
+    private static void RampLevels(VideoPlane y, int width, out int levels, out int cutLevels)
+    {
+        var all = new HashSet<int>();
+        var cut = new HashSet<int>();
+        foreach (int row in new[] { 30, 90, 150 })
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int value = Sample16(y, x, row);
+                all.Add(value);
+                cut.Add(value >> 2);
+            }
+        }
+
+        levels = all.Count;
+        cutLevels = cut.Count;
+    }
+
+    private static int DistinctBytes(VideoPlane y, int[] rows)
+    {
+        var all = new HashSet<byte>();
+        foreach (int row in rows)
+        {
+            foreach (byte value in y.GetRow(row)) all.Add(value);
+        }
+
+        return all.Count;
+    }
+
+    private static void CheckWidened(VideoPlane eight, VideoPlane ten, string plane, long frame)
+    {
+        for (int row = 0; row < eight.Rows; row++)
+        {
+            ReadOnlySpan<byte> a = eight.GetRow(row);
+            ReadOnlySpan<byte> b = ten.GetRow(row);
+            for (int x = 0; x < a.Length; x++)
+            {
+                int wide = b[2 * x] | (b[2 * x + 1] << 8);
+                if (wide != a[x] << 2) throw new InvalidOperationException($"check failed: {plane} sample ({x},{row}) of frame {frame} is {wide}, expected {a[x] << 2}");
+            }
+        }
+    }
+
+    // How two 10-bit planes differ: the number of differing samples and the first one, for a failure message.
+    private static string Difference(byte[] a, byte[] b)
+    {
+        int count = 0, first = -1;
+        for (int i = 0; i + 1 < a.Length && i + 1 < b.Length; i += 2)
+        {
+            if (a[i] == b[i] && a[i + 1] == b[i + 1]) continue;
+            if (first < 0) first = i / 2;
+            count++;
+        }
+
+        if (count == 0) return "no samples differ";
+        return $"{count} samples differ, first at sample {first}: {a[2 * first] | (a[2 * first + 1] << 8)} vs {b[2 * first] | (b[2 * first + 1] << 8)}";
+    }
+
+    private static string Fnv1a(byte[] data)
+    {
+        ulong hash = 14695981039346656037UL;
+        foreach (byte value in data)
+        {
+            hash ^= value;
+            hash *= 1099511628211UL;
+        }
+
+        return hash.ToString("x16");
     }
 
     // Decodes one frame and encodes one frame before the steps. If EITHER fails before producing anything, the device

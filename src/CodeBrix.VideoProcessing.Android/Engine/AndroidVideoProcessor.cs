@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using CodeBrix.VideoProcessing.Android.Managed;
@@ -22,10 +23,17 @@ namespace CodeBrix.VideoProcessing.Android.Engine;
 /// </para>
 /// <para>
 /// CAPABILITIES (computed once, when the instance is created): RgbaInput, Nv12Input, GrayFrameSource, Snapshot,
-/// DirectTranscode, DirectTrim and DirectConcatenate always; HevcOutput when the device has a "video/hevc" encoder.
-/// Never AlphaFrameSource (Android's decoders expose no alpha), I444FrameSource (they deliver 4:2:0) or
-/// HighBitDepthFrameSource (frames are always 8-bit; a 10-bit source is cut to 8 bits and says so through
-/// <see cref="VideoSourceInfo.SourceBitDepth" />).
+/// DirectTranscode, DirectTrim and DirectConcatenate always; HevcOutput when the device has a "video/hevc" encoder;
+/// HighBitDepthFrameSource when the device has a video decoder that lists P010 output
+/// (<see cref="HighBitDepthDecoders" />). Never AlphaFrameSource (Android's decoders expose no alpha) or
+/// I444FrameSource (they deliver 4:2:0).
+/// </para>
+/// <para>
+/// BIT DEPTH: 8-bit frames are the default; a 10-bit source is then cut to 8 bits and says so through
+/// <see cref="VideoSourceInfo.SourceBitDepth" />. With HighBitDepthFrameSource, <see cref="VideoSourceOptions.BitDepth" />
+/// = 10 delivers I420, NV12 or Gray frames at 10 bits (the contract's low-bits samples): a 10-bit source through the
+/// decoder's P010 output (refused with NotSupportedException, naming the codec and stream, when the decoder will not
+/// output P010 for it), an 8-bit source widened (value &lt;&lt; 2). 12 bits are always refused.
 /// </para>
 /// <para>
 /// THREADING: the engine itself holds no per-call state and is safe to use from several threads. Every source,
@@ -41,8 +49,10 @@ public sealed class AndroidVideoProcessor : IVideoProcessor
     /// <summary>Creates the engine, reading the device's codec list once to decide <see cref="Capabilities" />.</summary>
     public AndroidVideoProcessor()
     {
+        List<CodecTypeInfo> codecs = AndroidMedia.ListCodecs();
         HasHevcEncoder = AndroidMedia.HasEncoder(MediaFormatKeys.MimeHevc);
-        Capabilities = AndroidEngineCapabilities.Compute(HasHevcEncoder);
+        HighBitDepthDecoders = AndroidEngineCapabilities.FindP010Decoders(codecs);
+        Capabilities = AndroidEngineCapabilities.Compute(HasHevcEncoder, HighBitDepthDecoders.Count > 0);
     }
 
     /// <summary>"android-mediacodec".</summary>
@@ -53,6 +63,16 @@ public sealed class AndroidVideoProcessor : IVideoProcessor
 
     /// <summary>True when the device's codec list has a "video/hevc" encoder (which sets <see cref="VideoProcessorCapabilities.HevcOutput" />).</summary>
     public bool HasHevcEncoder { get; }
+
+    /// <summary>
+    /// The device's video decoders that list COLOR_FormatYUVP010 (10-bit output), as "name (mime)" - for example
+    /// "c2.android.hevc.decoder (video/hevc)" - one entry per decoder and type, in codec-list order. Not empty exactly
+    /// when <see cref="Capabilities" /> includes <see cref="VideoProcessorCapabilities.HighBitDepthFrameSource" />.
+    /// A decoder listed here still has to accept P010 output for a PARTICULAR stream: OpenVideo with
+    /// <see cref="VideoSourceOptions.BitDepth" /> = 10 throws NotSupportedException naming the codec and stream when
+    /// it does not.
+    /// </summary>
+    public IReadOnlyList<string> HighBitDepthDecoders { get; }
 
     /// <inheritdoc />
     /// <remarks>
@@ -97,6 +117,14 @@ public sealed class AndroidVideoProcessor : IVideoProcessor
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// <see cref="VideoSourceOptions.BitDepth" /> = 10 needs <see cref="VideoProcessorCapabilities.HighBitDepthFrameSource" />
+    /// (see <see cref="HighBitDepthDecoders" />). A 10-bit (or unknown-depth) source is decoded with P010 output,
+    /// shifted down to the contract's low-bits samples; when the decoder will not configure P010 or delivers 8-bit
+    /// pictures for this stream, OpenVideo throws <see cref="NotSupportedException" /> naming the codec and the
+    /// stream instead of delivering cut samples. An 8-bit source is widened (value &lt;&lt; 2) and
+    /// <see cref="VideoSourceInfo.SourceBitDepth" /> says 8. BitDepth = 12 always throws NotSupportedException.
+    /// </remarks>
     public IVideoFrameSource OpenVideo(string path, VideoSourceOptions options = null)
     {
         EngineRequestGate.CheckPath(path, nameof(path));

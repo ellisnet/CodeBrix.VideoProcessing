@@ -14,7 +14,7 @@ namespace CodeBrix.VideoProcessing.Android.Engine;
 
 /// <summary>
 /// Decodes the first video stream of a file with MediaExtractor + a MediaCodec decoder (synchronous mode, on the
-/// caller's thread) into 8-bit frames, with the same semantics as the desktop engine's frame source.
+/// caller's thread) into 8-bit or 10-bit frames, with the same semantics as the desktop engine's frame source.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,9 +28,19 @@ namespace CodeBrix.VideoProcessing.Android.Engine;
 /// LAYOUTS: I420 is the decoded buffer itself; Gray is its Y plane (exactly I420's luma, in the delivered range);
 /// NV12 and RGBA are converted from it into one more reused buffer (RGBA with the stream's matrix and range;
 /// <see cref="VideoSourceInfo.ColorMatrix" /> then reports <see cref="VideoColorMatrix.Rgb" />, the matrix of the
-/// delivered samples, as the contract says). 10-bit (P010) decoder output is cut to its top 8
-/// bits and reported through <see cref="VideoSourceInfo.SourceBitDepth" />. Pictures stay in STORED orientation;
+/// delivered samples, as the contract says). Pictures stay in STORED orientation;
 /// <see cref="VideoSourceInfo.RotationDegrees" /> says how to display them.
+/// </para>
+/// <para>
+/// BIT DEPTH (<see cref="DecoderOutputMode" />): at 8 bits the decoder is asked for flexible YUV 4:2:0 - or, for a
+/// known 10-bit stream, for P010 where a decoder lists it (falling back to flexible) - and 10-bit (P010) output is cut
+/// to its top 8 bits, reported through <see cref="VideoSourceInfo.SourceBitDepth" />. At 10 bits
+/// the picture buffers are 10-bit I420 (two bytes per sample, low bits): a 10-bit or unknown-depth source REQUIRES the
+/// decoder's P010 output - the decoder is configured for it and the first picture is decoded while opening, so a
+/// decoder that refuses P010 or answers with 8-bit pictures fails OpenVideo with NotSupportedException naming the
+/// codec and the stream (a later 8-bit picture fails TryReadFrame the same way); a known 8-bit source is decoded as
+/// usual and widened (value &lt;&lt; 2). Gray at 10 bits is the Y plane; NV12 at 10 bits interleaves Cb / Cr sample
+/// by sample.
 /// </para>
 /// <para>
 /// OWNERSHIP: three picture buffers circulate (the frame on screen, a look-ahead, one being decoded); a frame is a
@@ -50,6 +60,9 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
     private readonly int pictureSize;
     private readonly long maximumFrames;
     private readonly VideoColorMatrix sourceMatrix;
+    private readonly DecoderOutputMode mode;
+    private readonly int bytesPerSample;
+    private readonly string streamLabel;
     private readonly CancellationToken cancellationToken;
     private readonly Stack<byte[]> pool = new Stack<byte[]>();
     private readonly MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
@@ -59,6 +72,8 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
     private MediaFormat outputFormat;
     private ConstantRateScheduler<byte[]> scheduler;
     private byte[] conversion;
+    private byte[] narrow;
+    private string decoderName;
     private long originMicroseconds;
     private long delivered;
     private bool inputDone;
@@ -76,8 +91,12 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
         if (width <= 0 || height <= 0) throw new MediaFormatException($"The video stream of '{path}' has no known size.");
         if (!stream.FrameRate.IsSpecified) throw new MediaFormatException($"The video stream of '{path}' has no known frame rate.");
 
-        pictureSize = YuvConversion.I420Size(width, height);
         VideoPixelLayout layout = options.PixelLayout;
+        int bitDepth = layout == VideoPixelLayout.Rgba ? 8 : options.BitDepth;
+        mode = HighBitDepthConversion.ChooseMode(bitDepth, stream.BitDepth);
+        bytesPerSample = mode == DecoderOutputMode.EightBit ? 1 : 2;
+        pictureSize = YuvConversion.I420Size(width, height) * bytesPerSample;
+        streamLabel = $"{(stream.BitDepth > 0 ? stream.BitDepth + "-bit " : string.Empty)}{stream.CodecName ?? "video"} stream (track {stream.Index})";
         sourceMatrix = stream.ColorMatrix;
         Info = new VideoSourceInfo
         {
@@ -87,7 +106,7 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
             Duration = stream.Duration,
             EstimatedFrameCount = stream.FrameCount > 0 ? stream.FrameCount : stream.FrameRate.FrameCountFor(stream.Duration),
             PixelLayout = layout,
-            BitDepth = 8,
+            BitDepth = bitDepth,
             SourceBitDepth = stream.BitDepth,
             SourceHasAlpha = false,
             HasAlpha = layout == VideoPixelLayout.Rgba,
@@ -104,7 +123,30 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
             MediaFormat format = extractor.GetTrackFormat(trackIndex);
             extractor.SeekTo(0, MediaExtractorSeekTo.PreviousSync);
             originMicroseconds = Math.Max(0, extractor.SampleTime);
-            decoder = AndroidMedia.CreateDecoder(format, path, AndroidMedia.GetString(format, MediaFormatKeys.Mime) ?? "video");
+            string mime = AndroidMedia.GetString(format, MediaFormatKeys.Mime) ?? "video";
+            if (mode == DecoderOutputMode.P010)
+            {
+                decoder = AndroidMedia.CreateP010Decoder(format, path, mime, streamLabel);
+            }
+            else if (HighBitDepthConversion.AsksForP010(mode, stream.BitDepth))
+            {
+                // 8-bit frames from a 10-bit stream: P010 output cut to its top 8 bits where a decoder offers it
+                // (some hardware decoders cannot convert 10-bit pictures to flexible 8-bit buffers), else flexible.
+                try
+                {
+                    decoder = AndroidMedia.CreateP010Decoder(format, path, mime, streamLabel);
+                }
+                catch (NotSupportedException)
+                {
+                    decoder = AndroidMedia.CreateDecoder(format, path, mime);
+                }
+            }
+            else
+            {
+                decoder = AndroidMedia.CreateDecoder(format, path, mime);
+            }
+
+            decoderName = decoder.Name;
             outputFormat = decoder.OutputFormat;
         }
         catch (JavaThrowable exception)
@@ -120,6 +162,26 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
 
         scheduler = new ConstantRateScheduler<byte[]>(Info.FrameRate, originMicroseconds, 0, pool.Push);
         Seek(options.StartTime);
+
+        if (mode == DecoderOutputMode.P010)
+        {
+            // Prove the decoder really outputs P010 for THIS stream before handing the source out: decode the first
+            // picture now (the scheduler keeps it, so nothing is lost). 8-bit output throws NotSupportedException.
+            try
+            {
+                DecodeOne();
+            }
+            catch (JavaThrowable exception)
+            {
+                Release();
+                throw new VideoProcessingException($"The video of '{path}' could not be decoded: {AndroidMedia.Describe(exception)}", exception);
+            }
+            catch
+            {
+                Release();
+                throw;
+            }
+        }
     }
 
     public VideoSourceInfo Info { get; }
@@ -273,6 +335,12 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
 
     private void CopyPicture(int index, byte[] picture)
     {
+        if (mode != DecoderOutputMode.EightBit)
+        {
+            CopyPictureDeep(index, picture);
+            return;
+        }
+
         using (global::Android.Media.Image image = decoder.GetOutputImage(index))
         {
             if (image != null)
@@ -287,8 +355,44 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
         AndroidImageCopy.ReadI420FromBuffer(buffer, bufferInfo.Offset, format, width, height, picture);
     }
 
+    // 10-bit frames: P010 pictures keep all ten bits; 8-bit pictures are widened - unless P010 is REQUIRED (a 10-bit or
+    // unknown-depth source), when an 8-bit picture means the decoder cut the samples and the request is refused.
+    private void CopyPictureDeep(int index, byte[] picture)
+    {
+        using (global::Android.Media.Image image = decoder.GetOutputImage(index))
+        {
+            if (image != null)
+            {
+                if (!AndroidImageCopy.IsP010(image) && mode == DecoderOutputMode.P010) throw EightBitOutput($"image format 0x{(int)image.Format:X}");
+                AndroidImageCopy.ReadI420Deep(image, width, height, picture);
+                return;
+            }
+        }
+
+        ByteBuffer buffer = decoder.GetOutputBuffer(index);
+        MediaFormat format = decoder.GetOutputFormat(index) ?? outputFormat;
+        int colorFormat = AndroidMedia.GetInt(format, MediaFormatKeys.ColorFormat);
+        if (colorFormat == MediaFormatKeys.ColorFormatYuvP010)
+        {
+            AndroidImageCopy.ReadP010FromBuffer(buffer, bufferInfo.Offset, format, width, height, picture);
+            return;
+        }
+
+        if (mode == DecoderOutputMode.P010) throw EightBitOutput($"color format 0x{colorFormat:X}");
+        narrow ??= new byte[YuvConversion.I420Size(width, height)];
+        AndroidImageCopy.ReadI420FromBuffer(buffer, bufferInfo.Offset, format, width, height, narrow);
+        HighBitDepthConversion.Widen(narrow, picture);
+    }
+
+    private NotSupportedException EightBitOutput(string what) => new NotSupportedException(
+        $"The {decoderName} decoder delivered 8-bit pictures ({what}) instead of P010 for the {streamLabel} of '{path}', so it " +
+        "cannot be delivered at 10 bits on this device. Open it with BitDepth = 8 (the samples are then cut to 8 bits and " +
+        "VideoSourceInfo.IsBitDepthReduced says so).");
+
     private VideoFrameData BuildFrame(byte[] picture, long slot)
     {
+        if (bytesPerSample == 2) return BuildDeepFrame(picture, slot);
+
         TimeSpan timestamp = Info.FrameRate.TimestampOf(slot);
         int luma = width * height;
         int chromaWidth = (width + 1) / 2;
@@ -317,6 +421,39 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
                     new VideoPlane(memory.Slice(luma, chroma), chromaWidth, chromaWidth, chromaHeight),
                     new VideoPlane(memory.Slice(luma + chroma, chroma), chromaWidth, chromaWidth, chromaHeight),
                     timestamp, slot);
+        }
+    }
+
+    // 10-bit frames: every plane is two bytes per sample, so row lengths are twice the widths in samples.
+    private VideoFrameData BuildDeepFrame(byte[] picture, long slot)
+    {
+        TimeSpan timestamp = Info.FrameRate.TimestampOf(slot);
+        int bitDepth = Info.BitDepth;
+        int lumaRow = 2 * width;
+        int luma = lumaRow * height;
+        int chromaWidth = (width + 1) / 2;
+        int chromaHeight = (height + 1) / 2;
+        int chromaRow = 2 * chromaWidth;
+        int chroma = chromaRow * chromaHeight;
+        var memory = new ReadOnlyMemory<byte>(picture);
+        VideoPlane y = new VideoPlane(memory.Slice(0, luma), lumaRow, lumaRow, height);
+
+        switch (Info.PixelLayout)
+        {
+            case VideoPixelLayout.Gray:
+                return VideoFrameData.CreateGray(width, height, y, timestamp, slot, default, bitDepth);
+            case VideoPixelLayout.Nv12:
+                conversion ??= new byte[pictureSize];
+                HighBitDepthConversion.I420ToNv12(picture, width, height, conversion);
+                return VideoFrameData.CreateNv12(width, height,
+                    new VideoPlane(new ReadOnlyMemory<byte>(conversion, 0, luma), lumaRow, lumaRow, height),
+                    new VideoPlane(new ReadOnlyMemory<byte>(conversion, luma, 2 * chroma), 2 * chromaRow, 2 * chromaRow, chromaHeight),
+                    timestamp, slot, default, bitDepth);
+            default:
+                return VideoFrameData.CreateI420(width, height, y,
+                    new VideoPlane(memory.Slice(luma, chroma), chromaRow, chromaRow, chromaHeight),
+                    new VideoPlane(memory.Slice(luma + chroma, chroma), chromaRow, chromaRow, chromaHeight),
+                    timestamp, slot, default, bitDepth);
         }
     }
 }

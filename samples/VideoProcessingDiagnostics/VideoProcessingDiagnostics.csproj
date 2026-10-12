@@ -18,7 +18,9 @@
   <ItemGroup>
     <!-- The engine under test, from source (it has no natives, so nothing else is needed). -->
     <ProjectReference Include="..\..\src\CodeBrix.VideoProcessing.Android\CodeBrix.VideoProcessing.Android.csproj" />
-    <!-- The synthetic input clip (see tests/Assets/PROVENANCE.txt). -->
+    <!-- The synthetic input clips (see tests/Assets/PROVENANCE.txt). -->
     <AndroidAsset Include="..\..\tests\Assets\clip-h264-aac.mp4" Link="clip-h264-aac.mp4" />
+    <!-- The synthetic 10-bit HEVC clip with the luma ramp, for the 10-bit steps (see PROVENANCE.txt). -->
+    <AndroidAsset Include="..\..\tests\Assets\clip-hevc10-aac.mp4" Link="clip-hevc10-aac.mp4" />
   </ItemGroup>
 </Project>

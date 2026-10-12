@@ -27,7 +27,12 @@ internal static class EngineRequestGate
         if (options.PixelLayout == VideoPixelLayout.Rgba) processor.RequireCapability(VideoProcessorCapabilities.RgbaInput, "RGBA frames");
         if (options.PixelLayout == VideoPixelLayout.I444) processor.RequireCapability(VideoProcessorCapabilities.I444FrameSource, "I444 frames");
         if (options.PixelLayout == VideoPixelLayout.Gray) processor.RequireCapability(VideoProcessorCapabilities.GrayFrameSource, "Gray frames");
-        if (options.BitDepth > 8) processor.RequireCapability(VideoProcessorCapabilities.HighBitDepthFrameSource, $"{options.BitDepth}-bit frames");
+        if (options.BitDepth > 8)
+        {
+            processor.RequireCapability(VideoProcessorCapabilities.HighBitDepthFrameSource, $"{options.BitDepth}-bit frames");
+            HighBitDepthConversion.CheckRequestedDepth(options.BitDepth);
+        }
+
         if (options.IncludeAlpha && options.PixelLayout != VideoPixelLayout.Rgba)
             processor.RequireCapability(VideoProcessorCapabilities.AlphaFrameSource, "alpha planes (VideoSourceOptions.IncludeAlpha)");
         return options;

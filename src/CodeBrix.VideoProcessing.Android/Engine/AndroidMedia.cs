@@ -244,6 +244,97 @@ internal static class AndroidMedia
         }
     }
 
+    /// <summary>
+    /// Creates, configures and starts a VIDEO decoder asked for P010 (10-bit) output: the platform's choice when it
+    /// lists COLOR_FormatYUVP010 for the stream's MIME type, else another decoder of that type that lists it and
+    /// accepts the format. A device with no such decoder, or a decoder that refuses the configuration, gives
+    /// NotSupportedException naming the codec and the stream.
+    /// </summary>
+    internal static MediaCodec CreateP010Decoder(MediaFormat format, string path, string mime, string stream)
+    {
+        string preferred = FindDecoder(format);
+        var candidates = new List<CodecTypeInfo>();
+        try
+        {
+            foreach (MediaCodecInfo info in new MediaCodecList(MediaCodecListKind.RegularCodecs).GetCodecInfos())
+            {
+                if (info.IsEncoder) continue;
+                foreach (string type in info.GetSupportedTypes())
+                {
+                    if (!string.Equals(type, mime, StringComparison.OrdinalIgnoreCase)) continue;
+                    MediaCodecInfo.CodecCapabilities capabilities = info.GetCapabilitiesForType(type);
+                    bool accepts = info.Name == preferred;
+                    if (!accepts)
+                    {
+                        try { accepts = capabilities.IsFormatSupported(format); }
+                        catch (JavaThrowable) { accepts = false; }
+                    }
+
+                    if (accepts) candidates.Add(new CodecTypeInfo(info.Name, false, type, capabilities.ColorFormats));
+                }
+            }
+        }
+        catch (JavaThrowable)
+        {
+        }
+
+        string name = AndroidEngineCapabilities.ChooseP010Decoder(candidates, mime, preferred);
+        if (name == null)
+        {
+            if (preferred == null) throw new MediaFormatException($"This device has no decoder for the {stream} of '{path}'.");
+            throw new NotSupportedException(
+                $"No {mime} decoder on this device lists P010 (10-bit) output for the {stream} of '{path}' (the platform's choice, {preferred}, does not). " +
+                "Open it with BitDepth = 8 (the samples are then cut to 8 bits and VideoSourceInfo.IsBitDepthReduced says so).");
+        }
+
+        MediaCodec codec = null;
+        try
+        {
+            codec = MediaCodec.CreateByCodecName(name);
+            format.SetInteger(MediaFormatKeys.ColorFormat, MediaFormatKeys.ColorFormatYuvP010);
+            codec.Configure(format, null, null, MediaCodecConfigFlags.None);
+            codec.Start();
+            return codec;
+        }
+        catch (JavaThrowable exception)
+        {
+            ReleaseQuietly(codec);
+            throw new NotSupportedException(
+                $"The {name} decoder refused P010 (10-bit) output for the {stream} of '{path}': {exception.Message}. Open it with BitDepth = 8.", exception);
+        }
+    }
+
+    /// <summary>
+    /// Every (codec, MIME type) entry of the device's codec list with the color formats the codec lists for the type
+    /// (empty for audio types and when the platform will not say); empty when the list cannot be read.
+    /// </summary>
+    internal static List<CodecTypeInfo> ListCodecs()
+    {
+        var codecs = new List<CodecTypeInfo>();
+        try
+        {
+            foreach (MediaCodecInfo info in new MediaCodecList(MediaCodecListKind.RegularCodecs).GetCodecInfos())
+            {
+                foreach (string type in info.GetSupportedTypes())
+                {
+                    IList<int> formats = null;
+                    if (type.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try { formats = info.GetCapabilitiesForType(type).ColorFormats; }
+                        catch (JavaThrowable) { formats = null; }
+                    }
+
+                    codecs.Add(new CodecTypeInfo(info.Name, info.IsEncoder, type, formats));
+                }
+            }
+        }
+        catch (JavaThrowable)
+        {
+        }
+
+        return codecs;
+    }
+
     /// <summary>True when the device's codec list has an encoder for a MIME type.</summary>
     internal static bool HasEncoder(string mime)
     {

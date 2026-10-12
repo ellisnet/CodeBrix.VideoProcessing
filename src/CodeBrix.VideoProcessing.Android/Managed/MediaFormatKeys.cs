@@ -56,6 +56,10 @@ internal static class MediaFormatKeys
     internal const int ColorFormatYuv420Planar = 19;
     internal const int ColorFormatYuv420SemiPlanar = 21;
     internal const int ColorFormatYuv420Flexible = 0x7F420888;
+    internal const int ColorFormatYuvP010 = 54;
+
+    // ImageFormat.YCBCR_P010 (the Image format of P010 decoder output)
+    internal const int ImageFormatYcbcrP010 = 0x36;
 
     // MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_*
     internal const int BitrateModeVbr = 1;

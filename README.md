@@ -76,6 +76,7 @@ The `CodeBrix.VideoProcessing.MitLicenseForever` package pulls in two dependenci
 * Built on Android's own MediaExtractor, MediaCodec, MediaMuxer and MediaMetadataRetriever: no ffmpeg, no native code of its own
 * Describing media files, with the exact rational frame rate and frame count of MP4 / MOV files read from their sample tables
 * Decoding video to 8-bit I420, NV12, RGBA or Gray frames at a constant frame rate with seeking, and audio to interleaved float at any sample rate and channel count
+* Decoding to 10-bit I420, NV12 or Gray frames on devices whose video decoders output P010, reported through the engine's capabilities
 * Writing standard MP4 files - H.264 (or HEVC on devices with an HEVC encoder) with AAC audio - from your own I420, NV12 or RGBA frames and sound, with a deterministic quality-to-bitrate mapping, keyframe interval, colour tags, rotation metadata, title and creation-time tags, and fast start
 * Snapshots, whole-file transcode with resizing and frame-rate change, keyframe-snapped or frame-accurate trim, and concatenation (lossless when the inputs match, re-encoded when they do not)
 

@@ -182,10 +182,12 @@ REPOSITORY LAYOUT
                                               Managed/ files, linked in as
                                               sources; the MP4 tests make
                                               fixtures with the host ffmpeg
-    tests/Assets/                          -- clip-h264-aac.mp4 (synthetic,
-                                              see PROVENANCE.txt there), used by
-                                              the Android host tests and bundled
-                                              into the device-proof app
+    tests/Assets/                          -- clip-h264-aac.mp4 and the 10-bit
+                                              ramp clip-hevc10-aac.mp4
+                                              (synthetic, see PROVENANCE.txt
+                                              there), used by the Android host
+                                              tests and bundled into the
+                                              device-proof app
     samples/VideoProcessingDiagnostics/    -- the Android device-proof app (see
                                               THE ANDROID ENGINE)
     tests/CodeBrix.VideoProcessing.Tests/  -- xUnit v3 + SilverAssertions
@@ -636,9 +638,38 @@ DESIGN DECISIONS - read before changing the engine:
       ten-thousandths of a bit per pixel, exact rational fps); keep the table
       in the AGENT-README in step if it changes. The result is clamped to the
       encoder's BitrateRange; VBR when supported.
-    * NOT SET: AlphaFrameSource, I444FrameSource, HighBitDepthFrameSource (see
-      the AGENT-README for why). P010 decoder output is accepted and cut to its
-      top 8 bits; delivering it at 10 bits is the obvious next step.
+    * NOT SET: AlphaFrameSource, I444FrameSource (see the AGENT-README for
+      why).
+    * 10-BIT FRAMES (HighBitDepthFrameSource, DEVICE-DEPENDENT). The probe is
+      AndroidEngineCapabilities.Compute / FindP010Decoders over CodecTypeInfo
+      entries (one per codec and MIME type, with its colorFormats) - pure
+      Managed/ code, host-tested with fake codec lists; AndroidMedia.
+      ListCodecs fills the entries from MediaCodecList. The decode decision is
+      HighBitDepthConversion.ChooseMode (8 -> EightBit; 10 + known 8-bit
+      source -> WidenEightBit, value << 2; 10 + 10-bit or unknown-depth source
+      -> P010 REQUIRED; 12 -> NotSupportedException, also in the request
+      gate). P010 words are value << 6; HighBitDepthConversion.ReadPlane /
+      ReadP010Buffer shift them down to the contract's low bits and are
+      host-tested on planar / semi-planar / padded / odd-width / cropped
+      layouts and bit-exact against the host ffmpeg's p010le vs yuv420p10le
+      decode of the ramp clip. On the device AndroidImageCopy.ReadI420Deep
+      copies each Image plane's bytes once and hands them to that same
+      reader. In P010 mode the source decodes the first picture INSIDE the
+      constructor so a decoder that answers with 8-bit pictures fails OpenVideo
+      (NotSupportedException naming codec + stream), not the first
+      TryReadFrame. The writer, Snapshot and the whole-file operations stay
+      8-bit.
+    * 8-BIT FRAMES OF A 10-BIT STREAM GO THROUGH P010 where a decoder lists it
+      (HighBitDepthConversion.AsksForP010), falling back to flexible output.
+      Found on the Pixel 4 XL: c2.qti.hevc.decoder decodes a Main 10 stream
+      to flexible 8-bit ByteBuffers with "CCodecBufferChannel:
+      sendOutputBuffers: tried 5 realloc and failed" + UNKNOWN_ERROR (its
+      HAL_PIXEL_FORMAT_YCbCr_420_P010_VENUS graphic buffers cannot be
+      converted), so every 8-bit OpenVideo / Snapshot / transcode of 10-bit
+      HEVC failed there; its P010 output works and is cut to the top 8 bits
+      exactly like the flexible path's cut. Google's c2.android.hevc.decoder on
+      that phone fails on Main 10 altogether ("C2SoftHevcDec: Fatal error in
+      decoder 0x43dd") and lists no P010.
     * Concatenation falls back to a RE-ENCODE when the inputs do not match
       (ConcatenationRule: MIME, size / sample format, byte-identical csd),
       rather than failing as the contract's copy-only wording suggests.
@@ -646,13 +677,20 @@ DESIGN DECISIONS - read before changing the engine:
 THE DEVICE PROOF - samples/VideoProcessingDiagnostics
     A one-screen .NET for Android app (ApplicationId
     com.codebrix.videoprocessing.diagnostics) that references the library as
-    SOURCE (no natives to carry), bundles tests/Assets/clip-h264-aac.mp4 as an
-    asset, and one second after launch runs the whole contract in 19 steps
+    SOURCE (no natives to carry), bundles tests/Assets/clip-h264-aac.mp4 and
+    clip-hevc10-aac.mp4 as assets, and one second after launch runs the whole
+    contract in 22 steps
     (Register, Analyse, Snapshot, OpenVideo I420 / Gray / NV12 + RGBA /
     StartTime + Seek, OpenAudio at the source format and at 22050 Hz mono,
     CreateWriter I420 + AAC with fast start and tags, NV12 + RGBA input, HEVC,
     TrimFile both ways, ConcatenateFiles both ways, TranscodeFile, the
-    capability refusals, cancellation). One line per step goes to logcat under
+    capability refusals, cancellation, then 10-BIT: I420 10-bit with the ramp
+    verified - 960 distinct levels, frame 0 written to
+    frame0-i420-10bit.raw for a host cmp against ffmpeg's yuv420p10le decode,
+    the 8-bit delivery = 10-bit >> 2 - Gray + NV12 10-bit, and 10-bit from
+    the 8-bit clip = 8-bit << 2; without HighBitDepthFrameSource those steps
+    check the refusal and pass with a note). A "VPDiag 10-bit probe:" line
+    lists the decoders that offer P010. One line per step goes to logcat under
     the tag VPDiag, then "VPDIAG RESULT: PASS: ..." or "VPDIAG RESULT: FAIL:
     ...". Before the steps a CODEC PROBE decodes and encodes one frame; when it
     fails, a step that then fails with VideoProcessingException is reported
@@ -670,8 +708,12 @@ THE DEVICE PROOF - samples/VideoProcessingDiagnostics
         adb -s <serial> shell am force-stop com.codebrix.videoprocessing.diagnostics
 
     The pulled MP4s can be checked with the host ffprobe / ffmpeg (every one
-    should decode with no errors). Proof devices so far: a Pixel 4 XL (arm64,
-    API 33) - every step PASS; and THE HP LAPTOP below.
+    should decode with no errors), and the pulled frame0-i420-10bit.raw must be
+    byte-identical to
+        ffmpeg -i tests/Assets/clip-hevc10-aac.mp4 -frames:v 1 -f rawvideo -pix_fmt yuv420p10le -
+    Proof devices so far: a Pixel 4 XL (arm64, API 33) - every step PASS,
+    HighBitDepthFrameSource set, frame 0 bit-identical; and THE HP LAPTOP
+    below (no working video codec, so its 10-bit steps are not meaningful).
 
 THE HP LAPTOP (Android-x86, x86_64, API 33)
     Its software-codec process (media.swcodec) aborts the first time a VIDEO

@@ -14,7 +14,7 @@ namespace CodeBrix.VideoProcessing.Android.Tests;
 /// <summary>A stand-in engine with the Android engine's capability set, for the request gate.</summary>
 internal sealed class StubProcessor : IVideoProcessor
 {
-    public StubProcessor(bool hevc) => Capabilities = AndroidEngineCapabilities.Compute(hevc);
+    public StubProcessor(bool hevc, bool p010 = false) => Capabilities = AndroidEngineCapabilities.Compute(hevc, p010);
 
     public string Name => "android-mediacodec";
 
@@ -78,6 +78,55 @@ public class EngineRequestGateTests
         deep.Message.Should().Contain("HighBitDepthFrameSource");
         alpha.Message.Should().Contain("AlphaFrameSource");
         alpha.Message.Should().Contain("'android-mediacodec'");
+    }
+
+    [Theory]
+    [InlineData(VideoPixelLayout.I420)]
+    [InlineData(VideoPixelLayout.Nv12)]
+    [InlineData(VideoPixelLayout.Gray)]
+    public void ten_bit_frames_pass_on_a_device_with_a_p010_decoder(VideoPixelLayout layout)
+    {
+        //Act
+        VideoSourceOptions options = EngineRequestGate.CheckSourceOptions(new StubProcessor(false, p010: true), new VideoSourceOptions { PixelLayout = layout, BitDepth = 10 });
+
+        //Assert
+        options.BitDepth.Should().Be(10);
+        options.PixelLayout.Should().Be(layout);
+    }
+
+    [Fact]
+    public void twelve_bit_frames_are_refused_even_with_a_p010_decoder()
+    {
+        //Act
+        var refused = Assert.Throws<NotSupportedException>(() => EngineRequestGate.CheckSourceOptions(new StubProcessor(true, p010: true), new VideoSourceOptions { BitDepth = 12 }));
+
+        //Assert
+        refused.Message.Should().Contain("12-bit");
+        refused.Message.Should().Contain("'android-mediacodec'");
+        refused.Message.Should().Contain("P010");
+    }
+
+    [Fact]
+    public void twelve_bit_frames_without_a_p010_decoder_name_the_missing_capability()
+        => Assert.Throws<NotSupportedException>(() => EngineRequestGate.CheckSourceOptions(new StubProcessor(false), new VideoSourceOptions { BitDepth = 12 }))
+            .Message.Should().Contain("HighBitDepthFrameSource");
+
+    [Fact]
+    public void rgba_at_ten_bits_is_the_contract_argument_error_even_with_a_p010_decoder()
+        => Assert.Throws<ArgumentOutOfRangeException>(() => EngineRequestGate.CheckSourceOptions(new StubProcessor(false, p010: true), new VideoSourceOptions { PixelLayout = VideoPixelLayout.Rgba, BitDepth = 10 }))
+            .ParamName.Should().Be("BitDepth");
+
+    [Fact]
+    public void i444_and_alpha_stay_refused_with_a_p010_decoder()
+    {
+        //Arrange
+        var engine = new StubProcessor(true, p010: true);
+
+        //Assert
+        Assert.Throws<NotSupportedException>(() => EngineRequestGate.CheckSourceOptions(engine, new VideoSourceOptions { PixelLayout = VideoPixelLayout.I444, BitDepth = 10 }))
+            .Message.Should().Contain("I444FrameSource");
+        Assert.Throws<NotSupportedException>(() => EngineRequestGate.CheckSourceOptions(engine, new VideoSourceOptions { BitDepth = 10, IncludeAlpha = true }))
+            .Message.Should().Contain("AlphaFrameSource");
     }
 
     [Fact]

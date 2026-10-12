@@ -30,6 +30,18 @@ internal static class HostTools
     /// <summary>The bundled synthetic clip (see tests/Assets/PROVENANCE.txt).</summary>
     public static string Clip => Path.Combine(AppContext.BaseDirectory, "Assets", "clip-h264-aac.mp4");
 
+    /// <summary>The bundled synthetic 10-bit HEVC clip with the luma ramp (see tests/Assets/PROVENANCE.txt).</summary>
+    public static string Clip10 => Path.Combine(AppContext.BaseDirectory, "Assets", "clip-hevc10-aac.mp4");
+
+    /// <summary>Decodes the first video frame of a file with the host ffmpeg into raw bytes of a pixel format.</summary>
+    public static byte[] FirstFrame(string path, string pixelFormat)
+    {
+        string folder = NewFolder();
+        string output = Path.Combine(folder, "frame.raw");
+        FFmpeg($"-i \"{path}\" -map 0:v:0 -frames:v 1 -f rawvideo -pix_fmt {pixelFormat} \"{output}\"");
+        return File.ReadAllBytes(output);
+    }
+
     /// <summary>A new empty folder under the system temporary folder.</summary>
     public static string NewFolder()
     {

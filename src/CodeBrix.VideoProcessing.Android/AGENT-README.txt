@@ -114,6 +114,11 @@ AndroidVideoProcessor : IVideoProcessor (sealed):
     string Name                       "android-mediacodec"
     VideoProcessorCapabilities Capabilities     computed once, see below
     bool HasHevcEncoder               the device has a "video/hevc" encoder
+    IReadOnlyList<string> HighBitDepthDecoders
+                                      the video decoders that list P010
+                                      (10-bit) output, as "name (mime)";
+                                      not empty exactly when
+                                      HighBitDepthFrameSource is set
     (plus every IVideoProcessor member)
 
 Create an AndroidVideoProcessor yourself only if you need an instance that is
@@ -140,17 +145,22 @@ CAPABILITIES
     AlphaFrameSource         NEVER   Android's video decoders expose no alpha
                                      plane. (See ALPHA AND MODE3 below.)
     I444FrameSource          NEVER   The platform decoders deliver 4:2:0 only.
-    HighBitDepthFrameSource  NEVER   10-bit decoder output (P010) is device-
-                                     dependent; frames are always 8-bit. A 10-bit
-                                     source is delivered cut to 8 bits and says
-                                     so (VideoSourceInfo.SourceBitDepth = 10,
-                                     IsBitDepthReduced = true). A future addition.
+    HighBitDepthFrameSource  when    Set only when MediaCodecList has a VIDEO
+                             device  DECODER whose capabilities list
+                             has a   COLOR_FormatYUVP010 (10-bit output) for one
+                             P010    of its types (HighBitDepthDecoders names
+                             decoder them). Then OpenVideo with BitDepth = 10
+                                     delivers I420, NV12 or Gray frames at 10
+                                     bits; 12 bits are never offered. See
+                                     10-BIT FRAMES below.
 
 Every operation whose flag is missing throws NotSupportedException through the
 contract's RequireCapability, naming "android-mediacodec" and the flag:
-OpenVideo with PixelLayout I444, BitDepth 10 or 12, or IncludeAlpha = true (with
-a YUV / Gray layout); CreateWriter / TranscodeFile with Mp4HevcAac on a device
-without an HEVC encoder.
+OpenVideo with PixelLayout I444, BitDepth 10 or 12 on a device without a P010
+decoder, or IncludeAlpha = true (with a YUV / Gray layout); CreateWriter /
+TranscodeFile with Mp4HevcAac on a device without an HEVC encoder. BitDepth 12
+is refused with NotSupportedException on EVERY device (Android's decoders output
+8-bit or 10-bit pictures only).
 
 ALPHA AND MODE3: an Android app that AUTHORS video with transparency generates
 its own frames (with their alpha) and encodes them with an encoder package
@@ -211,7 +221,8 @@ OpenVideo(path, options)
     tightly packed I420 buffer. Layouts: I420 (the buffer itself), Gray (its Y
     plane), NV12 and RGBA (converted into one more reused buffer; RGBA uses the
     stream's matrix and range - BT.601 up to 576 lines and BT.709 above when the
-    file does not say - with alpha 255). Always 8-bit.
+    file does not say - with alpha 255). 8-bit by default; I420, NV12 and Gray
+    also at 10 bits where HighBitDepthFrameSource is set (see 10-BIT FRAMES).
     CONSTANT RATE: each decoded picture goes to the grid slot NEAREST its
     presentation time (slot 0 = the stream's first sample time); a slot with no
     picture repeats the previous one; several pictures in one slot keep the
@@ -317,6 +328,67 @@ ConcatenateFiles(request, progress, ct)
 
 Every MP4 the engine writes (writer, copies, re-encodes) goes through the
 post-pass with fast start ON; TranscodeFile follows Output.FastStart.
+
+
+10-BIT FRAMES (P010)
+====================
+    if (engine.Supports(VideoProcessorCapabilities.HighBitDepthFrameSource))
+    {
+        using IVideoFrameSource source = engine.OpenVideo(path,
+            new VideoSourceOptions { BitDepth = 10 });     // I420, Nv12 or Gray
+        // source.Info.BitDepth == 10; every sample is a ushort, little-endian,
+        // 0..1023 in the LOW bits; Y.RowLength == 2 * Width
+    }
+
+THE PROBE. Capabilities are computed once, from MediaCodecList: the flag is set
+when at least one video decoder lists COLOR_FormatYUVP010 (54) among its color
+formats for one of its types. AndroidVideoProcessor.HighBitDepthDecoders shows
+which ("c2.qti.hevc.decoder (video/hevc)", ...). Which decoders list it is
+up to the device: on a Pixel 4 XL (API 33) the Qualcomm AVC / HEVC / VP8 / VP9
+decoders do and Google's software decoders do not.
+
+WHAT IS DELIVERED (BitDepth = 10):
+    * A 10-bit stream (HEVC Main 10, VP9 profile 2, AV1 10-bit, ... - the
+      depth comes from the stream's PROFILE) or a stream whose depth the
+      profile does not fix: the decoder is configured for P010 output - the
+      platform's own choice of decoder when it lists P010 for the stream's
+      MIME type, else another decoder of that type that lists it and accepts
+      the stream. P010 stores each sample in the HIGH 10 bits of a 16-bit
+      word (value << 6); the engine shifts it down, so the delivered samples
+      follow the CONTRACT's low-bits convention (the libaom / dav1d one), not
+      P010's. Info.BitDepth = 10, Info.SourceBitDepth = 10 (0 when the
+      profile does not say), IsBitDepthReduced = false.
+    * An 8-bit stream: decoded as usual and every sample WIDENED, value << 2
+      (16 -> 64, 235 -> 940, 255 -> 1020). Info.SourceBitDepth = 8 says the
+      samples were widened and add no detail - the same reporting as the
+      desktop engine.
+    * Layouts: I420 (Y, U, V at two bytes per sample), Gray (the 10-bit Y
+      plane), NV12 (Y, then Cb Cr interleaved SAMPLE BY SAMPLE - two bytes
+      each - in the low-bits convention). RGBA is always 8-bit (the contract
+      refuses RGBA + 10 with ArgumentOutOfRangeException); I444 is never
+      offered.
+
+REFUSALS - never silently cut samples when 10 bits were asked for:
+    * No decoder of the stream's MIME type lists P010, the decoder refuses the
+      P010 configuration, or it answers with 8-bit pictures:
+      NotSupportedException naming the codec and the stream (e.g. "The
+      c2.x.hevc.decoder decoder delivered 8-bit pictures ... for the 10-bit
+      hevc stream (track 0) of '...'"). OpenVideo decodes the first picture
+      while opening, so this normally comes from OpenVideo itself; a decoder
+      that switches to 8-bit pictures later fails TryReadFrame the same way.
+      Open the file with BitDepth = 8 instead (the samples are then cut to
+      8 bits and IsBitDepthReduced says so).
+    * BitDepth = 12: NotSupportedException on every device.
+
+8-BIT FRAMES OF A 10-BIT STREAM (the default BitDepth = 8): the samples are
+the top 8 bits of the 10-bit ones (value >> 2), Info.SourceBitDepth = 10 and
+IsBitDepthReduced = true. Where a decoder lists P010 the engine decodes such a
+stream through P010 and cuts it (some hardware decoders - the Pixel 4 XL's
+c2.qti.hevc.decoder - fail outright when asked to convert a 10-bit stream to
+flexible 8-bit buffers); otherwise through flexible 8-bit output as before.
+
+Snapshot, TranscodeFile, TrimFile (re-encode) and ConcatenateFiles (re-encode)
+work on 8-bit frames, and the writer takes 8-bit frames only.
 
 
 QUALITY -> BITRATE
@@ -429,8 +501,16 @@ COMMON PITFALLS
     * Running a transcode on the UI thread - everything runs on the calling
       thread.
     * Asking for Mp4HevcAac without checking Supports(HevcOutput).
-    * Asking OpenVideo for alpha, I444 or 10-bit frames - not on Android
+    * Asking OpenVideo for alpha or I444 frames - not on Android
       (NotSupportedException); use an encoder package for alpha authoring.
+    * Asking for BitDepth = 10 without checking
+      Supports(HighBitDepthFrameSource) - it is device-dependent - and not
+      being ready for NotSupportedException from OpenVideo even when it is
+      set: the flag says SOME decoder outputs P010, not that the one for this
+      stream will.
+    * Reading 10-bit samples as P010 (high bits) - the engine has already
+      shifted them to the LOW bits; 1023 is the maximum.
+    * Asking for 12-bit frames - never on Android.
     * Expecting ConstantQuality(L) to look identical to the desktop engine -
       it is a bitrate here (see QUALITY -> BITRATE).
     * Expecting a snapped trim to end exactly at To - it may include up to two
