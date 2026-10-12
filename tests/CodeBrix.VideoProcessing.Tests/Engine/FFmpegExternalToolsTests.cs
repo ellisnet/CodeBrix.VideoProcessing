@@ -58,7 +58,9 @@ public class FFmpegExternalToolsTests
         lines.Should().NotBeEmpty();
         lines[0].Should().StartWith("ffmpeg version");
         result.StandardOutput.Should().BeEmpty();
-        result.RenderedCommand.Should().EndWith("ffmpeg -hide_banner -version");
+        // The located path, which on Windows carries an extension (e.g. "ffmpeg.exe").
+        result.RenderedCommand.Should().Be(ExternalToolRunner.RenderCommand(engine.Tools.Locate("ffmpeg").Path, command.Arguments));
+        result.RenderedCommand.Should().EndWith(" -hide_banner -version");
     }
 
     [Fact]

@@ -14,10 +14,13 @@ internal sealed class ToolTestFolder : IDisposable
 
     public string Path { get; }
 
-    /// <summary>Writes a file (LF line endings), optionally with execute permission (ignored on Windows).</summary>
+    /// <summary>
+    /// Writes a file (LF line endings), optionally with execute permission (ignored on Windows), and returns its full
+    /// path, normalized as the locator returns paths ("bin/x" becomes "bin\x" on Windows).
+    /// </summary>
     public string Write(string relativePath, string content, bool executable = false)
     {
-        string full = System.IO.Path.Combine(Path, relativePath);
+        string full = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, relativePath));
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(full));
         File.WriteAllText(full, content.Replace("\r\n", "\n"));
         if (!OperatingSystem.IsWindows())
@@ -30,10 +33,10 @@ internal sealed class ToolTestFolder : IDisposable
         return full;
     }
 
-    /// <summary>Creates a sub-folder and returns its full path.</summary>
+    /// <summary>Creates a sub-folder and returns its full path, normalized like <see cref="Write" />.</summary>
     public string Folder(string relativePath)
     {
-        string full = System.IO.Path.Combine(Path, relativePath);
+        string full = System.IO.Path.GetFullPath(System.IO.Path.Combine(Path, relativePath));
         Directory.CreateDirectory(full);
         return full;
     }

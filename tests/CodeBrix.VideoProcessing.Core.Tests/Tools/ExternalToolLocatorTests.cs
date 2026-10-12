@@ -116,13 +116,14 @@ public class ExternalToolLocatorTests
     [Fact]
     public void a_name_with_a_directory_separator_is_checked_as_a_path()
     {
-        //Arrange
+        //Arrange - the real platform, because the path uses the real separator ("\" on Windows).
         using var folder = new ToolTestFolder();
         string script = folder.Write("tools/run-me", "#!/bin/sh\n", executable: true);
+        bool windows = OperatingSystem.IsWindows();
 
         //Act
-        ExternalTool found = ExternalToolLocator.Locate(script, new[] { folder.Folder("elsewhere") }, string.Empty, windows: false);
-        ExternalTool missing = ExternalToolLocator.Locate(script + "-not", null, string.Empty, windows: false);
+        ExternalTool found = ExternalToolLocator.Locate(script, new[] { folder.Folder("elsewhere") }, string.Empty, windows);
+        ExternalTool missing = ExternalToolLocator.Locate(script + "-not", null, string.Empty, windows);
 
         //Assert
         found.Path.Should().Be(script);
