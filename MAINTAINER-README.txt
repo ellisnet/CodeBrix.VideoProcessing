@@ -975,6 +975,28 @@ WHAT THIS PORT DOES INSTEAD
 Fenced by tests/CodeBrix.VideoProcessing.Tests/OutputPipeDrainTests.cs.
 
 
+A KILL ENDS THE WHOLE PROCESS TREE - a CodeBrix fix of an upstream bug
+======================================================================
+CODEBRIX FIX ON TOP OF THE FFMpegCore PORT, in Instances/ProcessInstance.cs.
+Upstream's ProcessInstance.Kill() (and the kill in WaitForExitAsync's
+cancellation callback) is Process.Kill(), which ends ONLY the process that was
+started. The "ffmpeg" on the PATH is not always ffmpeg: a Chocolatey or Scoop
+shim on Windows (C:\ProgramData\chocolatey\bin\ffmpeg.exe is one) is a small
+launcher that starts the real ffmpeg as a CHILD and waits for it. Killing the
+shim leaves the real ffmpeg running, still holding the redirected stdout and
+stderr, and ProcessInstance reports the exit only once both reach EOF - so a
+cancel waited until ffmpeg finished the whole job on its own. Measured:
+OutputPipeDrainTests' token-ignoring-sink cancel took 113 s through the shim,
+0.66 s against the real binary.
+
+WHAT THIS PORT DOES INSTEAD: Process.Kill(entireProcessTree: true), as
+Engine/FFmpegToolProcess.cs and Core's ExternalToolRunner already do. ffmpeg
+and ffprobe start no children of their own, so where ffmpeg is launched
+directly (the usual Linux and macOS install, or a BinaryFolder pointing at the
+real binary) the tree is that one process and nothing changes. Supported on
+Windows, Linux and macOS; it does not depend on the ffmpeg version.
+
+
 AV1 ENCODER FALLBACK - the missing-libsvtav1 explanation and the opt-in fallback
 ===============================================================================
 ADDITION OF THIS PORT - there is nothing like it in FFMpegCore. The CodeBrix
@@ -1072,6 +1094,9 @@ NOTES
       ffmpeg's exit. That is a CodeBrix fix of an upstream FFMpegCore bug (a
       slow sink silently lost the tail); see OUTPUT PIPES DRAIN BEFORE THEY ARE
       DISPOSED. Do not "re-sync" it away when diffing against upstream.
+    * ProcessInstance kills the whole process tree, not just the process it
+      started - also a CodeBrix fix; see A KILL ENDS THE WHOLE PROCESS TREE.
+      Do not "re-sync" it away either.
 ================================================================================
 END OF MAINTAINER-README
 ================================================================================

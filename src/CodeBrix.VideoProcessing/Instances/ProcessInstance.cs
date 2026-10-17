@@ -56,7 +56,8 @@ public class ProcessInstance : IProcessInstance
     {
         try
         {
-            _process.Kill();
+            // CODEBRIX FIX - see A KILL ENDS THE WHOLE PROCESS TREE in MAINTAINER-README.txt.
+            _process.Kill(entireProcessTree: true);
             return GetResult();
         }
         catch (InvalidOperationException e)
@@ -73,7 +74,7 @@ public class ProcessInstance : IProcessInstance
             {
                 if (!_process.HasExited)
                 {
-                    _process.Kill();
+                    _process.Kill(entireProcessTree: true); // CODEBRIX FIX - see Kill()
                 }
             });
         }
