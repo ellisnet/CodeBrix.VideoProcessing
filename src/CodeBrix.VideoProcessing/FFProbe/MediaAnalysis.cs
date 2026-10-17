@@ -106,6 +106,7 @@ internal class MediaAnalysis : IMediaAnalysis
             RealFrameRate = MediaAnalysisUtils.ParseExactFrameRate(stream.FrameRate, null),
             FrameCount = MediaAnalysisUtils.ParseFrameCount(stream.NbFrames),
             DisplayMatrixRotation = MediaAnalysisUtils.ParseDisplayMatrixRotation(stream),
+            IsDisplayMatrixMirrored = MediaAnalysisUtils.ParseDisplayMatrixMirrored(stream),
             Language = stream.GetLanguage(),
             Disposition = MediaAnalysisUtils.FormatDisposition(stream.Disposition),
             Tags = stream.Tags.ToCaseInsensitive(),
@@ -291,6 +292,71 @@ public static class MediaAnalysisUtils
         }
 
         return double.TryParse(rotation.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number) ? number : null;
+    }
+
+    // ADDITION OF THIS PORT - feeds VideoSourceInfo.IsMirrored. True when the stream's "Display Matrix" side data
+    // carries a matrix whose determinant is negative (the picture is mirrored, on top of any rotation); false when
+    // there is no display matrix or its text cannot be read.
+    internal static bool ParseDisplayMatrixMirrored(FFProbeStream fFProbeStream)
+    {
+        var entry = fFProbeStream.SideData?.Find(item => item != null &&
+                                                         item.TryGetValue("side_data_type", out var type) && type?.ToString() == "Display Matrix");
+        if (entry == null || !entry.TryGetValue("displaymatrix", out var text) || text == null)
+        {
+            return false;
+        }
+
+        var matrix = ParseDisplayMatrix(text.ToString());
+        return matrix != null && IsMirroredDisplayMatrix(matrix);
+    }
+
+    // ffprobe prints the display matrix as three rows, each "<offset>:" followed by three integers (16.16 fixed point
+    // for the first two columns, 2.30 for the third), for example
+    //     "\n00000000:            0       65536           0\n00000001:       -65536 ...". Null when it is not nine integers.
+    internal static long[] ParseDisplayMatrix(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var values = new List<long>(9);
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var colon = line.IndexOf(':');
+            var row = colon >= 0 ? line.Substring(colon + 1) : line;
+            foreach (var token in row.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!long.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+                {
+                    return null;
+                }
+
+                values.Add(value);
+            }
+        }
+
+        return values.Count == 9 ? values.ToArray() : null;
+    }
+
+    // A display matrix (row-major, the 2x2 linear part in elements 0, 1, 3 and 4) mirrors the picture when that part's
+    // determinant is negative: a rotation alone keeps it positive, one flip makes it negative (two flips are a
+    // 180-degree rotation). The translation and the third column do not change the sign for a well-formed matrix.
+    internal static bool IsMirroredDisplayMatrix(long[] matrix)
+    {
+        if (matrix == null || matrix.Length < 5)
+        {
+            return false;
+        }
+
+        return DisplayMatrixDeterminant(matrix) < 0;
+    }
+
+    // The determinant of the display matrix's 2x2 linear part, in (16.16)^2 units; computed in double so that
+    // full-range 32-bit entries cannot overflow.
+    internal static double DisplayMatrixDeterminant(long[] matrix)
+    {
+        return (double)matrix[0] * matrix[4] - (double)matrix[1] * matrix[3];
     }
 
     private static long FractionTicks(string digits)

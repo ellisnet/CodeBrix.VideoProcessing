@@ -82,6 +82,30 @@ public class FFOptions : ICloneable
     /// </summary>
     public bool AllowAv1EncoderFallback { get; set; }
 
+    /// <summary>
+    ///     How long, after ffmpeg exits, an output pipe's sink (<see cref="Pipes.IPipeSink" />) may take to read the
+    ///     rest of the pipe. Default 30 seconds.
+    ///     <para>
+    ///         When ffmpeg exits, the run waits for each output pipe's sink to read the pipe to its end, so a sink slower
+    ///         than ffmpeg still receives every byte. This bounds that wait, counted from ffmpeg's exit: a sink that has
+    ///         not finished by then is cancelled, its pipe is disposed, and the run throws
+    ///         <see cref="Exceptions.FFMpegException" /> (Type = Process, "An output pipe sink did not drain ...") rather
+    ///         than returning short output.
+    ///     </para>
+    ///     <para>
+    ///         It does NOT delay a cancel: cancelling the run (<see cref="FFMpegArgumentProcessor.CancellableThrough(CancellationToken, int)" />)
+    ///         tears the sink down at once - its token is cancelled and its pipe disposed - and the run ends with an
+    ///         <see cref="OperationCanceledException" /> carrying the caller's token, even when the sink ignores its
+    ///         token and fails on the disposed pipe instead.
+    ///     </para>
+    ///     <para>
+    ///         Must be <see cref="TimeSpan.Zero" /> or more (at most <see cref="int.MaxValue" /> milliseconds), or
+    ///         <see cref="Timeout.InfiniteTimeSpan" /> to wait as long as the sink takes; any other value fails the run
+    ///         with <see cref="ArgumentOutOfRangeException" /> before ffmpeg starts.
+    ///     </para>
+    /// </summary>
+    public TimeSpan OutputPipeDrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
     /// <inheritdoc />
     object ICloneable.Clone()
     {

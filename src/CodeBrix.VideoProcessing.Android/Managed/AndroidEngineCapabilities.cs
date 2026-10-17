@@ -10,9 +10,10 @@ namespace CodeBrix.VideoProcessing.Android.Managed;
 /// picture), Snapshot, DirectTranscode, DirectTrim, DirectConcatenate. HevcOutput only when the device has a
 /// "video/hevc" ENCODER. HighBitDepthFrameSource only when the device has at least one VIDEO DECODER whose
 /// capabilities list COLOR_FormatYUVP010 (10-bit output; see <see cref="FindP010Decoders" />). Never set:
-/// AlphaFrameSource (Android's decoders expose no alpha), I444FrameSource (the decoders deliver 4:2:0) and
+/// AlphaFrameSource (Android's decoders expose no alpha), I444FrameSource (the decoders deliver 4:2:0),
 /// ExternalTools (an Android app has no external command-line tools to run; the engine works through the platform's
-/// media APIs and is not an IExternalToolHost).
+/// media APIs and is not an IExternalToolHost) and Chapters (MediaExtractor and MediaMetadataRetriever expose no
+/// chapter markers, so Analyse always leaves MediaInfo.Chapters empty).
 /// </remarks>
 internal static class AndroidEngineCapabilities
 {

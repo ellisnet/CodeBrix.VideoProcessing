@@ -32,6 +32,25 @@ internal static class EngineTestMedia
     public static void CreateRgbClip(string path, string colour) =>
         RunFFmpeg($"-f lavfi -i color=c={colour}:size=64x48:rate=25:duration=0.2 -c:v ffv1 -pix_fmt bgr0 \"{path}\"");
 
+    /// <summary>
+    /// A 64x48, 25 fps, 10-frame H.264 MP4 whose display matrix is MIRRORED (horizontal flip) on top of
+    /// <paramref name="counterClockwiseDegrees" /> of rotation (ffmpeg's -display_rotation sense). The picture is encoded
+    /// first and the display matrix set on a stream copy, so it reaches the file untouched.
+    /// </summary>
+    public static void CreateMirroredClip(string path, int counterClockwiseDegrees)
+    {
+        string plain = path + ".plain.mp4";
+        try
+        {
+            RunFFmpeg($"-f lavfi -i testsrc=size=64x48:rate=25:duration=0.4 -c:v libx264 -pix_fmt yuv420p \"{plain}\"");
+            RunFFmpeg($"-display_rotation {counterClockwiseDegrees.ToString(System.Globalization.CultureInfo.InvariantCulture)} -display_hflip -i \"{plain}\" -c copy \"{path}\"");
+        }
+        finally
+        {
+            File.Delete(plain);
+        }
+    }
+
     public static void CreateNtscClip(string path) =>
         RunFFmpeg($"-f lavfi -i testsrc=size=64x48:rate=30000/1001 -frames:v 30 " +
                   (path.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase) ? "-c:v ffv1" : "-c:v libx264 -pix_fmt yuv420p") +

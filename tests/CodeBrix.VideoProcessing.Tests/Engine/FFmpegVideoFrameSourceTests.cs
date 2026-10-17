@@ -118,6 +118,37 @@ public class FFmpegVideoFrameSourceTests
         frame.Width.Should().Be(1280);
         frame.Height.Should().Be(720);
         source.Info.RotationDegrees.Should().Be(270);
+        source.Info.IsMirrored.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(0, 180)]
+    [InlineData(90, 270)]
+    public void a_mirroring_display_matrix_is_reported_as_is_mirrored(int counterClockwiseDegrees, int clockwiseRotation)
+    {
+        //Arrange
+        using var clip = new TemporaryFile("mirrored.mp4");
+        EngineTestMedia.CreateMirroredClip(clip, counterClockwiseDegrees);
+
+        //Act
+        using IVideoFrameSource source = engine.OpenVideo(clip);
+        source.TryReadFrame(out VideoFrameData frame);
+
+        //Assert
+        source.Info.IsMirrored.Should().BeTrue();
+        source.Info.RotationDegrees.Should().Be(clockwiseRotation);
+        frame.Width.Should().Be(64);
+        frame.Height.Should().Be(48);
+    }
+
+    [Fact]
+    public void an_unrotated_source_is_not_mirrored()
+    {
+        //Arrange
+        using IVideoFrameSource source = engine.OpenVideo(TestResources.Mp4Video);
+
+        //Assert
+        source.Info.IsMirrored.Should().BeFalse();
     }
 
     [Fact]

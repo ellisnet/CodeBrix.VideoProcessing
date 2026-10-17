@@ -50,6 +50,38 @@ public class FFmpegProbeTests
     }
 
     [Fact]
+    public void IsMirrored_follows_the_display_matrix_of_the_stream_asked_for()
+    {
+        //Arrange - ffprobe 7.1's report on a clip made with "-display_rotation 90 -display_hflip", plus an unmirrored stream.
+        const string json = """
+        {
+          "streams": [
+            { "index": 0, "codec_type": "video", "codec_name": "h264", "width": 64, "height": 48, "r_frame_rate": "25/1",
+              "side_data_list": [ { "side_data_type": "Display Matrix",
+                "displaymatrix": "\n00000000:            0      -65536           0\n00000001:       -65536           0           0\n00000002:            0           0  1073741824\n",
+                "rotation": 90 } ] },
+            { "index": 1, "codec_type": "video", "codec_name": "h264", "width": 64, "height": 48, "r_frame_rate": "25/1",
+              "side_data_list": [ { "side_data_type": "Display Matrix",
+                "displaymatrix": "\n00000000:            0       65536           0\n00000001:       -65536           0           0\n00000002:            0           0  1073741824\n",
+                "rotation": -90 } ] }
+          ],
+          "format": { "format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "0.400000" }
+        }
+        """;
+
+        //Act
+        IMediaAnalysis analysis = FFProbe.ParseJson(json);
+        MediaInfo info = FFmpegProbe.FromAnalysis(analysis);
+
+        //Assert
+        FFmpegProbe.IsMirrored(analysis, 0).Should().BeTrue();
+        FFmpegProbe.IsMirrored(analysis, 1).Should().BeFalse();
+        FFmpegProbe.IsMirrored(analysis, 7).Should().BeFalse();
+        info.VideoStreams[0].RotationDegrees.Should().Be(270);
+        info.VideoStreams[1].RotationDegrees.Should().Be(90);
+    }
+
+    [Fact]
     public void Parse_maps_subtitle_streams_and_chapters_and_drops_placeholders()
     {
         //Arrange

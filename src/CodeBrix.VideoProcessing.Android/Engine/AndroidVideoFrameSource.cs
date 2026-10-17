@@ -111,6 +111,9 @@ internal sealed class AndroidVideoFrameSource : IVideoFrameSource
             SourceHasAlpha = false,
             HasAlpha = layout == VideoPixelLayout.Rgba,
             RotationDegrees = stream.RotationDegrees,
+            // MediaExtractor's track format exposes only a rotation angle ("rotation-degrees"), never the container's
+            // display matrix, so a mirrored source cannot be detected here: always reported as not mirrored.
+            IsMirrored = false,
             ColorRange = stream.ColorRange == VideoColorRange.Full ? VideoColorRange.Full : VideoColorRange.Limited,
             // The matrix of the DELIVERED samples: the stream's for YUV / Gray, Rgb for RGBA (those samples are RGB).
             ColorMatrix = layout == VideoPixelLayout.Rgba ? VideoColorMatrix.Rgb : stream.ColorMatrix

@@ -56,6 +56,10 @@ public class VideoStream : MediaStream
     /// </summary>
     public double? DisplayMatrixRotation { get; set; }
 
+    // ADDITION OF THIS PORT - true when the stream's display matrix mirrors the picture (negative determinant; see
+    // MediaAnalysisUtils.ParseDisplayMatrixMirrored). Internal: the engine reports it as VideoSourceInfo.IsMirrored.
+    internal bool IsDisplayMatrixMirrored { get; set; }
+
     public PixelFormat GetPixelFormatInfo()
     {
         return FFMpeg.GetPixelFormat(PixelFormat);

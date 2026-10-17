@@ -49,6 +49,13 @@ public sealed class VideoSourceInfo
     /// <summary>The CLOCKWISE rotation (0, 90, 180, 270) a player applies to the delivered frames for display.</summary>
     public int RotationDegrees { get; init; }
 
+    /// <summary>
+    /// True when the container's display matrix mirrors the picture (its determinant is negative), so a player must
+    /// flip the delivered frames after rotating them by <see cref="RotationDegrees" />. False when the source is not
+    /// mirrored, or when the engine cannot tell.
+    /// </summary>
+    public bool IsMirrored { get; init; }
+
     /// <summary>The sample range of the delivered YUV and Gray frames (the alpha plane is always full range).</summary>
     public VideoColorRange ColorRange { get; init; }
 

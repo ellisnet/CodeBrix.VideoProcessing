@@ -344,10 +344,21 @@ task while ffmpeg runs.
         output options - ffmpeg cannot infer a format from a pipe path.
         A sink slower than ffmpeg is fine: when ffmpeg exits, the processor
         waits for the sink to read the pipe to its end before disposing it, so
-        the sink always receives every byte. If it has still not finished 30 s
-        after ffmpeg exited, the run throws FFMpegException (Type = Process,
-        "An output pipe sink did not drain ...") rather than returning short
-        output. Cancelling the run cancels the sink's token at once. An
+        the sink always receives every byte. If it has still not finished
+        FFOptions.OutputPipeDrainTimeout (default 30 s) after ffmpeg exited,
+        the run throws FFMpegException (Type = Process, "An output pipe sink
+        did not drain ...") rather than returning short output. Set it per run
+        with .Configure(o => o.OutputPipeDrainTimeout = ...), or on the
+        FFOptions you pass to ProcessSynchronously / ProcessAsynchronously; a
+        negative value (other than Timeout.InfiniteTimeSpan) throws
+        ArgumentOutOfRangeException before ffmpeg starts.
+        Cancelling the run does NOT wait for the drain: it cancels the sink's
+        token and disposes its pipe at once, and the run throws
+        OperationCanceledException carrying the token you cancelled - also
+        when the sink ignores its token and fails on the disposed pipe
+        (ObjectDisposedException / IOException are reported as the cancel,
+        with the sink's exception as InnerException). A sink that ignores both
+        its token and its pipe is abandoned about a second later. Any other
         exception thrown by the sink itself propagates unchanged.
 
   Frame / sample contracts:
@@ -1480,6 +1491,10 @@ LOCATING THE FFMPEG BINARIES - FFOptions / GlobalFFOptions
         bool UseCache { get; set; } = true           // cache the codec catalogue
         bool AllowAv1EncoderFallback { get; set; } = false
                                         // libsvtav1 missing -> use libaom-av1
+        TimeSpan OutputPipeDrainTimeout { get; set; } = TimeSpan.FromSeconds(30)
+                                        // how long an output pipe's sink may
+                                        // take to finish reading after ffmpeg
+                                        // exits; >= 0 or InfiniteTimeSpan
         FFOptions Clone()
 
     public static class GlobalFFOptions
@@ -1500,7 +1515,8 @@ LOCATING THE FFMPEG BINARIES - FFOptions / GlobalFFOptions
   `ffmpeg.config.json` in the process's current directory if that file exists
   (deserialized straight into FFOptions - so its keys are "BinaryFolder",
   "TemporaryFilesFolder", "WorkingDirectory", "EncodingWebName", "LogLevel",
-  "ExtensionOverrides", "UseCache", "AllowAv1EncoderFallback"); otherwise a
+  "ExtensionOverrides", "UseCache", "AllowAv1EncoderFallback",
+  "OutputPipeDrainTimeout" - a TimeSpan string such as "00:00:30"); otherwise a
   default FFOptions is used.
 
   Configure it in code at startup instead if you prefer:
@@ -2461,7 +2477,7 @@ FFmpegVideoProcessor (CodeBrix.VideoProcessing.Engine) : IVideoProcessor,
     Capabilities == SupportedCapabilities == everything EXCEPT Nv12Input:
         AlphaFrameSource | RgbaInput | HevcOutput | DirectTranscode |
         DirectTrim | DirectConcatenate | Snapshot | I444FrameSource |
-        GrayFrameSource | HighBitDepthFrameSource | ExternalTools
+        GrayFrameSource | HighBitDepthFrameSource | ExternalTools | Chapters
     IExternalTools Tools            the external-tools facet (see below)
 Construct one directly only when it needs its own FFOptions; otherwise use
 Register() and VideoProcessors.Current.
@@ -2482,10 +2498,15 @@ How each contract member is carried out:
                              Title from the title tag, Tags). Chapters: every
                              chapter in order (Index 0.., Start, End, Title;
                              Tags carry the title only - the ported model
-                             keeps no other chapter tags).
+                             keeps no other chapter tags); hence the Chapters
+                             capability.
     OpenVideo                ffmpeg decodes the FIRST video stream to raw frames
                              on its standard output: -noautorotate (frames stay
-                             in stored orientation), an fps filter at the
+                             in stored orientation; Info.RotationDegrees and
+                             Info.IsMirrored say how to display them -
+                             IsMirrored is true when the stream's display
+                             matrix side data has a negative determinant), an
+                             fps filter at the
                              stream's rate (constant-rate delivery), the
                              source's sample range kept, then the pixel format
                              for the requested layout, depth and alpha:

@@ -23,6 +23,7 @@ public class FFMpegArgumentProcessor
     private readonly FFMpegArguments _ffMpegArguments;
     private bool _av1EncoderFallbackEnabled;
     private string _av1EncoderFallbackProblem;
+    private CancellationToken _cancellationToken;
     private CancellationTokenRegistration? _cancellationTokenRegistration;
     private bool _cancelled;
     private FFMpegLogLevel? _logLevel;
@@ -43,8 +44,13 @@ public class FFMpegArgumentProcessor
 
     // CODEBRIX FIX (not in upstream FFMpegCore) - see OUTPUT PIPES DRAIN BEFORE THEY ARE DISPOSED in
     // MAINTAINER-README.txt. How long after ffmpeg exits an output pipe's sink may take to read the rest of the
-    // pipe before the run fails with "did not drain". Internal so tests can shorten it.
-    internal TimeSpan OutputPipeDrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
+    // pipe before the run fails with "did not drain". Null (the default) means the run's
+    // FFOptions.OutputPipeDrainTimeout, the public knob; set, it overrides that for this processor (tests use it).
+    internal TimeSpan? OutputPipeDrainTimeout { get; set; }
+
+    // CODEBRIX FIX - how long a cancelled or timed-out run waits for a torn-down sink (token cancelled, pipe
+    // disposed) to return before abandoning it, so a sink that ignores its token cannot hold the run.
+    private static readonly TimeSpan TornDownSinkGrace = TimeSpan.FromSeconds(1);
 
     /// <summary>
     ///     True once <see cref="FFOptions.AllowAv1EncoderFallback" /> has rewritten an output of this processor from
@@ -115,6 +121,7 @@ public class FFMpegArgumentProcessor
     public FFMpegArgumentProcessor CancellableThrough(CancellationToken token, int timeout = 0)
     {
         token.ThrowIfCancellationRequested();
+        _cancellationToken = token;
         _cancellationTokenRegistration?.Dispose();
         _cancellationTokenRegistration = token.Register(() => Cancel(timeout));
         return this;
@@ -140,13 +147,14 @@ public class FFMpegArgumentProcessor
     public bool ProcessSynchronously(bool throwOnError = true, FFOptions ffMpegOptions = null)
     {
         var options = GetConfiguredOptions(ffMpegOptions);
+        var outputPipeDrainTimeout = ResolveOutputPipeDrainTimeout(options);
         var processArguments = PrepareProcessArguments(options);
         using var cancellationTokenSource = new CancellationTokenSource();
 
         IProcessResult processResult = null;
         try
         {
-            processResult = Process(processArguments, cancellationTokenSource).ConfigureAwait(false).GetAwaiter().GetResult();
+            processResult = Process(processArguments, cancellationTokenSource, outputPipeDrainTimeout).ConfigureAwait(false).GetAwaiter().GetResult();
         }
         catch (OperationCanceledException)
         {
@@ -162,13 +170,14 @@ public class FFMpegArgumentProcessor
     public async Task<bool> ProcessAsynchronously(bool throwOnError = true, FFOptions ffMpegOptions = null)
     {
         var options = GetConfiguredOptions(ffMpegOptions);
+        var outputPipeDrainTimeout = ResolveOutputPipeDrainTimeout(options);
         var processArguments = PrepareProcessArguments(options);
         using var cancellationTokenSource = new CancellationTokenSource();
 
         IProcessResult processResult = null;
         try
         {
-            processResult = await Process(processArguments, cancellationTokenSource).ConfigureAwait(false);
+            processResult = await Process(processArguments, cancellationTokenSource, outputPipeDrainTimeout).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -181,14 +190,27 @@ public class FFMpegArgumentProcessor
         return HandleCompletion(throwOnError, processResult?.ExitCode ?? -1, processResult?.ErrorData ?? Array.Empty<string>());
     }
 
-    private async Task<IProcessResult> Process(ProcessArguments processArguments, CancellationTokenSource cancellationTokenSource)
+    // CODEBRIX FIX - the drain timeout of this run: the processor's override, else FFOptions.OutputPipeDrainTimeout.
+    private TimeSpan ResolveOutputPipeDrainTimeout(FFOptions options)
+    {
+        var timeout = OutputPipeDrainTimeout ?? options.OutputPipeDrainTimeout;
+        if (timeout != Timeout.InfiniteTimeSpan && (timeout < TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue))
+        {
+            throw new ArgumentOutOfRangeException(nameof(FFOptions.OutputPipeDrainTimeout), timeout,
+                "The output pipe drain timeout must be zero or more (at most Int32.MaxValue milliseconds), or Timeout.InfiniteTimeSpan.");
+        }
+
+        return timeout;
+    }
+
+    private async Task<IProcessResult> Process(ProcessArguments processArguments, CancellationTokenSource cancellationTokenSource, TimeSpan outputPipeDrainTimeout)
     {
         IProcessResult processResult = null;
         _pipeFailure = null;
         if (_cancelled)
         {
             _cancellationTokenRegistration?.Dispose();
-            throw new OperationCanceledException("cancelled before starting processing");
+            throw new OperationCanceledException("cancelled before starting processing", _cancellationToken);
         }
 
         _ffMpegArguments.Pre();
@@ -198,6 +220,10 @@ public class FFMpegArgumentProcessor
         // CODEBRIX FIX - see OUTPUT PIPES DRAIN BEFORE THEY ARE DISPOSED in MAINTAINER-README.txt. Output-pipe
         // sinks read under this token instead of cancellationTokenSource's, which ffmpeg's exit cancels.
         using var sinkCancellationSource = new CancellationTokenSource();
+
+        // CODEBRIX FIX - completed by a user cancel, so that a drain wait already in progress (ffmpeg has exited, a
+        // sink is still reading) stops at once instead of running on to the drain timeout.
+        var cancelRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         void OnCancelEvent(object sender, int timeout)
         {
@@ -212,6 +238,7 @@ public class FFMpegArgumentProcessor
             // CODEBRIX FIX - a cancel that arrives after ffmpeg has exited, while a sink is still draining, must
             // still stop that sink at once (the exit handler only covers cancels that came before the exit).
             ExecuteIgnoringFinishedProcessExceptions(() => sinkCancellationSource.Cancel());
+            cancelRequested.TrySetResult();
 
             static void ExecuteIgnoringFinishedProcessExceptions(Action action)
             {
@@ -242,7 +269,8 @@ public class FFMpegArgumentProcessor
             // swallows the cancellation - nobody was told. Now the exit still cancels the During token (input pipes,
             // and output pipes ffmpeg never connected to) and posts everything else, but a connected output pipe's
             // sink keeps reading to EOF under sinkCancellationSource; the pipe is disposed once it has (finally,
-            // below). The wait is bounded by OutputPipeDrainTimeout, and a cancel still tears the sink down at once.
+            // below). The wait is bounded by the drain timeout (FFOptions.OutputPipeDrainTimeout, or this processor's
+            // OutputPipeDrainTimeout override), and a cancel still tears the sink down at once.
             foreach (var outputPipe in _ffMpegArguments.OutputPipes)
             {
                 outputPipe.SinkCancellationToken = sinkCancellationSource.Token;
@@ -265,24 +293,57 @@ public class FFMpegArgumentProcessor
             var duringTask = _ffMpegArguments.During(cancellationTokenSource.Token);
             var sinkDrainTimedOut = false;
 
+            // CODEBRIX FIX - waits for ffmpeg's exit, then for the sinks: up to outputPipeDrainTimeout while they
+            // drain, but not at all once the run is cancelled. A cancelled or timed-out run tears the sinks down
+            // (token cancelled, pipe disposed) and then gives them only TornDownSinkGrace to return; a sink that
+            // ignores both its token and its disposed pipe is abandoned rather than allowed to hold the run.
+            // duringTask's own failure surfaces through here (it is not awaited separately, which would wait for
+            // such a sink without bound).
             async Task WaitForOutputSinksToDrainAsync()
             {
                 await exitTask.ConfigureAwait(false);
-                try
+                if (!_cancelled)
                 {
-                    await duringTask.WaitAsync(OutputPipeDrainTimeout).ConfigureAwait(false);
+                    using var drainTimer = new CancellationTokenSource();
+                    var drainTimeout = Task.Delay(outputPipeDrainTimeout, drainTimer.Token);
+                    var first = await Task.WhenAny(duringTask, drainTimeout, cancelRequested.Task).ConfigureAwait(false);
+                    drainTimer.Cancel();
+                    if (first == duringTask)
+                    {
+                        await duringTask.ConfigureAwait(false);
+                        return;
+                    }
+
+                    sinkDrainTimedOut = first == drainTimeout && !_cancelled;
                 }
-                catch (TimeoutException)
+
+                sinkCancellationSource.Cancel();
+                _ffMpegArguments.PostOutputPipes();
+
+                if (await Task.WhenAny(duringTask, Task.Delay(TornDownSinkGrace)).ConfigureAwait(false) == duringTask)
                 {
-                    sinkDrainTimedOut = true;
-                    sinkCancellationSource.Cancel();
-                    _ffMpegArguments.PostOutputPipes();
+                    await duringTask.ConfigureAwait(false);
+                }
+                else
+                {
+                    // Abandoned: observe whatever it throws on its way out, so it is not an unobserved task exception.
+                    _ = duringTask.ContinueWith(static t => _ = t.Exception, CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
                 }
             }
 
             try
             {
-                await Task.WhenAll(exitTask, duringTask, WaitForOutputSinksToDrainAsync()).ConfigureAwait(false);
+                await Task.WhenAll(exitTask, WaitForOutputSinksToDrainAsync()).ConfigureAwait(false);
+            }
+            catch (Exception tearDownFailure) when (_cancelled && IsTearDownFailure(tearDownFailure))
+            {
+                // CODEBRIX FIX - a user cancel tore the sink and its pipe down; what the sink threw on that disposed
+                // pipe (ObjectDisposedException, IOException, its own cancellation) is a symptom of the cancel, so
+                // the caller sees the cancel, with the token they cancelled. Anything else still propagates.
+                _pipeFailure = null;
+                _cancellationTokenRegistration?.Dispose();
+                throw Cancelled(tearDownFailure);
             }
             catch (Exception sinkFailure) when (sinkDrainTimedOut && !_cancelled)
             {
@@ -308,7 +369,7 @@ public class FFMpegArgumentProcessor
                 // Cancellation is the story, not the pipe that cancelling broke.
                 _pipeFailure = null;
                 _cancellationTokenRegistration?.Dispose();
-                throw new OperationCanceledException("ffmpeg processing was cancelled");
+                throw Cancelled(null);
             }
 
             if (sinkDrainTimedOut)
@@ -326,14 +387,25 @@ public class FFMpegArgumentProcessor
             _ffMpegArguments.PostOutputPipes();
         }
 
+        OperationCanceledException Cancelled(Exception innerException)
+        {
+            return new OperationCanceledException("ffmpeg processing was cancelled", innerException, _cancellationToken);
+        }
+
         FFMpegException SinkDidNotDrain(Exception innerException)
         {
             return new FFMpegException(FFMpegExceptionType.Process,
                 $"An output pipe sink did not drain: ffmpeg exited (exit code {processResult?.ExitCode}) but the sink had still not read " +
-                $"everything ffmpeg wrote to the pipe {OutputPipeDrainTimeout.TotalSeconds:0.###} s later, so the piped output is incomplete.",
+                $"everything ffmpeg wrote to the pipe {outputPipeDrainTimeout.TotalSeconds:0.###} s later, so the piped output is incomplete.",
                 innerException,
                 string.Join("\n", processResult?.ErrorData ?? Array.Empty<string>()));
         }
+    }
+
+    // CODEBRIX FIX - what a sink or pipe throws because a cancel disposed its pipe or cancelled its token.
+    private static bool IsTearDownFailure(Exception failure)
+    {
+        return failure is ObjectDisposedException or IOException or OperationCanceledException;
     }
 
     private bool HandleCompletion(bool throwOnError, int exitCode, IReadOnlyList<string> errorData)

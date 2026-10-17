@@ -171,6 +171,18 @@ public class AndroidEngineCapabilitiesTests
     public void external_tools_are_never_reported_on_android(bool hevcEncoder, bool p010Decoder)
         => AndroidEngineCapabilities.Compute(hevcEncoder, p010Decoder).HasFlag(VideoProcessorCapabilities.ExternalTools).Should().BeFalse();
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void chapters_are_never_reported_on_android(bool hevcEncoder, bool p010Decoder)
+        => AndroidEngineCapabilities.Compute(hevcEncoder, p010Decoder).HasFlag(VideoProcessorCapabilities.Chapters).Should().BeFalse();
+
+    [Fact]
+    public void chapters_are_not_reported_for_a_whole_codec_list()
+        => AndroidEngineCapabilities.Compute(PhoneCodecs(hevcDecoderListsP010: true)).HasFlag(VideoProcessorCapabilities.Chapters).Should().BeFalse();
+
     [Fact]
     public void external_tools_are_not_reported_for_a_whole_codec_list()
         => AndroidEngineCapabilities.Compute(PhoneCodecs(hevcDecoderListsP010: true)).HasFlag(VideoProcessorCapabilities.ExternalTools).Should().BeFalse();

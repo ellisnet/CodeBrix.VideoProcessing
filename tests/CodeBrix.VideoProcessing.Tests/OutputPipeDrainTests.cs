@@ -155,6 +155,144 @@ public class OutputPipeDrainTests
         (thrown.Message).Should().Contain("did not drain");
     }
 
+    [Fact]
+    public async Task Cancelling_while_a_token_ignoring_sink_drains_after_ffmpeg_exited_surfaces_operation_canceled_promptly()
+    {
+        //Arrange
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var processor = TinyDecode(TokenIgnoringSink()).CancellableThrough(cancellation.Token);
+        var stopwatch = Stopwatch.StartNew();
+        cancellation.CancelAfter(TimeSpan.FromSeconds(2));
+
+        //Act
+        var act = () => processor.ProcessAsynchronously();
+
+        //Assert - before the fix this waited out the 30 s default and then surfaced ObjectDisposedException.
+        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(act);
+        (thrown.CancellationToken).Should().Be(cancellation.Token);
+        (stopwatch.Elapsed).Should().BeLessThan(TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public void Cancelling_while_ffmpeg_runs_with_a_token_ignoring_sink_surfaces_operation_canceled()
+    {
+        //Arrange
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var verySlow = new ThrottledStream(TimeSpan.FromMilliseconds(20), 4096);
+        var sink = new StreamPipeSink((input, token) => input.CopyToAsync(verySlow, 4096, CancellationToken.None));
+        var processor = RawVideoDecode(sink).CancellableThrough(cancellation.Token);
+        var stopwatch = Stopwatch.StartNew();
+        cancellation.CancelAfter(TimeSpan.FromMilliseconds(500));
+
+        //Act
+        Action act = () => processor.ProcessSynchronously();
+
+        //Assert - the sink fails on its disposed pipe; the caller is told about the cancel, not about the pipe.
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(act);
+        (thrown.CancellationToken).Should().Be(cancellation.Token);
+        (stopwatch.Elapsed).Should().BeLessThan(TimeSpan.FromSeconds(15));
+        (verySlow.BytesWritten).Should().BeLessThan(31_000_000);
+    }
+
+    [Fact]
+    public void A_sink_failure_that_is_not_a_tear_down_symptom_still_surfaces_after_a_cancel()
+    {
+        //Arrange
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var sink = new StreamPipeSink(async (input, token) =>
+        {
+            var frame = new byte[TinyFrameBytes];
+            await input.ReadExactlyAsync(frame, CancellationToken.None).ConfigureAwait(false);
+            while (!token.IsCancellationRequested)
+            {
+                await Task.Delay(20, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            throw new InvalidOperationException("sink failed on its own");
+        });
+        var processor = TinyDecode(sink).CancellableThrough(cancellation.Token);
+        cancellation.CancelAfter(TimeSpan.FromSeconds(2));
+
+        //Act
+        Action act = () => processor.ProcessSynchronously();
+
+        //Assert
+        var thrown = Assert.Throws<InvalidOperationException>(act);
+        (thrown.Message).Should().Be("sink failed on its own");
+    }
+
+    [Fact]
+    public void Drain_timeout_set_on_ffoptions_is_honoured()
+    {
+        //Arrange
+        var options = GlobalFFOptions.Current.Clone();
+        options.OutputPipeDrainTimeout = TimeSpan.FromSeconds(1);
+        var processor = TinyDecode(StallingSink()).CancellableThrough(TestContext.Current.CancellationToken);
+        var stopwatch = Stopwatch.StartNew();
+
+        //Act
+        Action act = () => processor.ProcessSynchronously(true, options);
+
+        //Assert
+        var thrown = Assert.Throws<FFMpegException>(act);
+        (thrown.Type).Should().Be(FFMpegExceptionType.Process);
+        (thrown.Message).Should().Contain("did not drain");
+        (thrown.Message).Should().Contain(" 1 s later");
+        (stopwatch.Elapsed).Should().BeLessThan(TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public async Task Drain_timeout_set_through_configure_is_honoured_asynchronously()
+    {
+        //Arrange
+        var processor = TinyDecode(StallingSink())
+            .Configure(options => options.OutputPipeDrainTimeout = TimeSpan.FromMilliseconds(1500))
+            .CancellableThrough(TestContext.Current.CancellationToken);
+
+        //Act
+        var act = () => processor.ProcessAsynchronously();
+
+        //Assert
+        var thrown = await Assert.ThrowsAsync<FFMpegException>(act);
+        (thrown.Message).Should().Contain(" 1.5 s later");
+    }
+
+    [Fact]
+    public void Drain_timeout_defaults_to_thirty_seconds()
+        => (new FFOptions().OutputPipeDrainTimeout).Should().Be(TimeSpan.FromSeconds(30));
+
+    [Fact]
+    public void Drain_timeout_survives_clone_and_json()
+    {
+        //Arrange
+        var options = new FFOptions { OutputPipeDrainTimeout = TimeSpan.FromSeconds(5) };
+
+        //Act
+        var cloned = options.Clone();
+        var json = System.Text.Json.JsonSerializer.Serialize(options);
+        var read = System.Text.Json.JsonSerializer.Deserialize<FFOptions>(json);
+
+        //Assert
+        (cloned.OutputPipeDrainTimeout).Should().Be(TimeSpan.FromSeconds(5));
+        (read.OutputPipeDrainTimeout).Should().Be(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public void A_negative_drain_timeout_fails_before_ffmpeg_starts()
+    {
+        //Arrange
+        var options = GlobalFFOptions.Current.Clone();
+        options.OutputPipeDrainTimeout = TimeSpan.FromSeconds(-2);
+        var processor = TinyDecode(StallingSink()).CancellableThrough(TestContext.Current.CancellationToken);
+
+        //Act
+        Action act = () => processor.ProcessSynchronously(true, options);
+
+        //Assert
+        var thrown = Assert.Throws<ArgumentOutOfRangeException>(act);
+        (thrown.ParamName).Should().Be(nameof(FFOptions.OutputPipeDrainTimeout));
+    }
+
     private static ThrottledStream DecodeToRawVideo(ThrottledStream destination)
     {
         RawVideoDecode(new StreamPipeSink(destination))
@@ -195,6 +333,23 @@ public class OutputPipeDrainTests
             var frame = new byte[TinyFrameBytes];
             await input.ReadExactlyAsync(frame, token).ConfigureAwait(false);
             await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false);
+        });
+    }
+
+    // Reads the one frame TinyDecode writes, then never finishes and never looks at its token: every 50 ms it reads
+    // the pipe again (0 bytes at EOF) - until the pipe is disposed under it and the read throws ObjectDisposedException.
+    private static StreamPipeSink TokenIgnoringSink()
+    {
+        return new StreamPipeSink(async (input, token) =>
+        {
+            var frame = new byte[TinyFrameBytes];
+            await input.ReadExactlyAsync(frame, CancellationToken.None).ConfigureAwait(false);
+            var probe = new byte[1];
+            while (true)
+            {
+                await Task.Delay(50, CancellationToken.None).ConfigureAwait(false);
+                _ = await input.ReadAsync(probe, CancellationToken.None).ConfigureAwait(false);
+            }
         });
     }
 

@@ -217,10 +217,16 @@ OPTIONAL - VideoProcessorCapabilities [Flags]:
     ExternalTools        the engine can locate and run external command-line
                          tools and offers them (IExternalToolHost); see
                          EXTERNAL TOOLS. No IVideoProcessor member needs it.
-The last three are FRAME-SOURCE capabilities only: the standard MP4 writer takes
-8-bit I420 / NV12 / RGBA and nothing else, whatever the engine. An engine with
-a flag may still refuse one combination it cannot produce exactly (for example
-12-bit I420 with alpha) with a NotSupportedException that names it.
+    Chapters             the engine reads chapter markers from a source:
+                         Analyse fills MediaInfo.Chapters when the source has
+                         chapters, so an empty list means it has none. Without
+                         the flag an empty list says nothing. No
+                         IVideoProcessor member needs it (nothing throws).
+I444FrameSource, GrayFrameSource and HighBitDepthFrameSource are FRAME-SOURCE
+capabilities only: the standard MP4 writer takes 8-bit I420 / NV12 / RGBA and
+nothing else, whatever the engine. An engine with a flag may still refuse one
+combination it cannot produce exactly (for example 12-bit I420 with alpha) with
+a NotSupportedException that names it.
 An operation whose flag is missing throws NotSupportedException.
 
     bool engine.Supports(VideoProcessorCapabilities flags)        // ALL flags set?
@@ -283,9 +289,12 @@ ChapterInfo: int Index (position in the chapter list, from 0); TimeSpan Start,
 End; string Title (null when none); Tags (at least "title" when there is one);
 TimeSpan Duration (End - Start, never negative).
 
-What each engine fills: the ffmpeg engine fills both lists from ffprobe; the
-Android engine fills SubtitleStreams from MediaExtractor's text tracks and
-leaves Chapters EMPTY (the platform exposes none). Both default to empty lists,
+What each engine fills: the ffmpeg engine fills both lists from ffprobe (and
+reports VideoProcessorCapabilities.Chapters); the Android engine fills
+SubtitleStreams from MediaExtractor's text tracks and leaves Chapters EMPTY (the
+platform exposes none; it does not report the Chapters flag). Check
+engine.Supports(VideoProcessorCapabilities.Chapters) before reading an empty
+Chapters list as "this file has no chapters". Both default to empty lists,
 so an engine that knows nothing of them stays correct.
 
 Unknown values are 0 / null / Unspecified - never guessed.
@@ -380,7 +389,8 @@ IVideoFrameSource : IDisposable
 Frames come in presentation order at a CONSTANT rate:
 frame.Timestamp == Info.FrameRate.TimestampOf(frame.FrameIndex), and FrameIndex
 counts from the START of the stream (also after a Seek or a StartTime).
-Frames are in STORED orientation; Info.RotationDegrees says how to display them.
+Frames are in STORED orientation; Info.RotationDegrees says how to display them,
+and Info.IsMirrored says whether to flip them after rotating.
 
 VideoSourceOptions: PixelLayout (I420 default; I444 needs I444FrameSource, Gray
 needs GrayFrameSource, NV12 / RGBA need Nv12Input / RgbaInput), BitDepth (8
@@ -393,8 +403,10 @@ VideoSourceInfo: Width, Height (stored), FrameRate (constant), Duration,
 EstimatedFrameCount, PixelLayout, BitDepth (as asked: 8, 10 or 12 - equal to
 every delivered frame's BitDepth), SourceBitDepth, IsBitDepthReduced (e.g.
 10-bit HDR delivered as 8-bit), SourceHasAlpha, HasAlpha (alpha actually
-delivered), RotationDegrees (clockwise), ColorRange, ColorMatrix (of the
-delivered samples).
+delivered), RotationDegrees (clockwise), IsMirrored (true when the container's
+display matrix mirrors the picture - its determinant is negative - so a player
+must flip after rotating; false when not mirrored or when the engine cannot
+tell), ColorRange, ColorMatrix (of the delivered samples).
 
 IAudioSampleSource : IDisposable
     AudioSourceInfo Info           SampleRate, Channels, Duration, SourceCodecName
@@ -478,8 +490,12 @@ IMPLEMENTING AN ENGINE
     2. Validate every request with its Validate() method before doing work.
     3. Build MediaInfo / VideoSourceInfo with object initializers; leave
        unknown values at 0 / null / Unspecified. Report RotationDegrees
-       CLOCKWISE, normalised to 0/90/180/270. Fill SubtitleStreams and
-       Chapters when the platform shows them; otherwise leave them empty.
+       CLOCKWISE, normalised to 0/90/180/270; set VideoSourceInfo.IsMirrored
+       when the source's display matrix mirrors the picture (leave it false
+       when the platform cannot say). Fill SubtitleStreams and Chapters when
+       the platform shows them; otherwise leave them empty. Declare
+       VideoProcessorCapabilities.Chapters only when Analyse really reads
+       chapter markers.
     4. Frame sources: deliver frames in stored orientation, at a constant rate,
        with Timestamp = Info.FrameRate.TimestampOf(FrameIndex). Reusing
        buffers between TryReadFrame calls is allowed (and expected).
@@ -758,6 +774,10 @@ COMMON PITFALLS
     * Forgetting Finish() - Dispose alone throws the output away.
     * Assuming an optional capability - check Supports(...) first.
     * Treating RotationDegrees as counter-clockwise - it is CLOCKWISE.
+    * Ignoring VideoSourceInfo.IsMirrored - a mirrored source needs a flip
+      after the rotation.
+    * Reading an empty MediaInfo.Chapters as "no chapters" on an engine without
+      the Chapters capability - it may simply not read them.
     * Reading a 10/12-bit plane as bytes - samples are 16-bit little-endian
       and RowLength is in BYTES (2 x width).
     * Feeding I444, Gray or 10/12-bit frames to the standard MP4 writer - it

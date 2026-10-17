@@ -24,7 +24,12 @@ namespace CodeBrix.VideoProcessing.Engine;
 /// </remarks>
 internal static class FFmpegProbe
 {
-    internal static async Task<MediaInfo> AnalyseAsync(string path, FFOptions options, CancellationToken cancellationToken)
+    internal static async Task<MediaInfo> AnalyseAsync(string path, FFOptions options, CancellationToken cancellationToken) =>
+        FromAnalysis(await ProbeAsync(path, options, cancellationToken).ConfigureAwait(false));
+
+    // The friendly model of the file, with ffprobe's failures mapped onto the contract's exceptions. For callers that
+    // need more than MediaInfo carries (the frame source's IsMirrored).
+    internal static async Task<IMediaAnalysis> ProbeAsync(string path, FFOptions options, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(path)) throw new ArgumentException("The path is required.", nameof(path));
         if (!File.Exists(path)) throw new FileNotFoundException("The media file does not exist.", path);
@@ -55,7 +60,14 @@ internal static class FFmpegProbe
             throw new MediaFormatException($"ffprobe's report on '{path}' could not be read.", exception);
         }
 
-        return FromAnalysis(analysis);
+        return analysis;
+    }
+
+    // True when the video stream with this index has a mirroring display matrix (VideoSourceInfo.IsMirrored).
+    internal static bool IsMirrored(IMediaAnalysis analysis, int streamIndex)
+    {
+        VideoStream stream = analysis?.VideoStreams?.Find(candidate => candidate.Index == streamIndex);
+        return stream != null && stream.IsDisplayMatrixMirrored;
     }
 
     // Kept for unit tests over hand-written reports: it goes through the same friendly model.

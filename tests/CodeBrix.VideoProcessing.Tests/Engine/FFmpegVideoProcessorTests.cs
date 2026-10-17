@@ -31,6 +31,14 @@ public class FFmpegVideoProcessorTests
     }
 
     [Fact]
+    public void Capabilities_include_chapters()
+    {
+        //Assert
+        engine.Supports(VideoProcessorCapabilities.Chapters).Should().BeTrue();
+        FFmpegVideoProcessor.SupportedCapabilities.HasFlag(VideoProcessorCapabilities.Chapters).Should().BeTrue();
+    }
+
+    [Fact]
     public void Analyse_maps_an_mp4_with_video_and_audio()
     {
         //Act

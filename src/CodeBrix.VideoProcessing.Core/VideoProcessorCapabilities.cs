@@ -89,5 +89,13 @@ public enum VideoProcessorCapabilities
     /// example a desktop authoring library) through whichever engine is registered, without referencing the engine's
     /// package. No operation of <see cref="IVideoProcessor" /> depends on it.
     /// </summary>
-    ExternalTools = 1 << 11
+    ExternalTools = 1 << 11,
+
+    /// <summary>
+    /// The engine reads chapter markers from a source: <see cref="IVideoProcessor.Analyse" /> fills
+    /// <see cref="Media.MediaInfo.Chapters" /> when the source carries chapters, so an empty list means the source has
+    /// none. Without it, an empty <see cref="Media.MediaInfo.Chapters" /> says nothing about the source. No operation
+    /// of <see cref="IVideoProcessor" /> depends on it, so nothing throws when it is missing.
+    /// </summary>
+    Chapters = 1 << 12
 }

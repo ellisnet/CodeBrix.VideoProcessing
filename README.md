@@ -64,7 +64,7 @@ The `CodeBrix.VideoProcessing.MitLicenseForever` package pulls in two dependenci
 
 * One registry (`VideoProcessors`) and one interface (`IVideoProcessor`), so a library can process video without knowing which engine the application chose
 * Describing media files: container, duration, video streams (size, exact rational frame rate, bit depth, alpha, rotation, colour range / matrix / primaries / transfer), audio streams, subtitle streams and chapters
-* Decoding video to I420 frames (and, where the engine offers it, NV12, RGBA, I444 or Gray frames at 8, 10 or 12 bits, with an optional alpha plane), and audio to interleaved 32-bit float samples, frame by frame with seeking
+* Decoding video to I420 frames (and, where the engine offers it, NV12, RGBA, I444 or Gray frames at 8, 10 or 12 bits, with an optional alpha plane), and audio to interleaved 32-bit float samples, frame by frame with seeking, with the source's display rotation and mirroring reported alongside
 * Writing standard MP4 files (H.264 or HEVC video with AAC audio) from your own frames and sound, at a constant frame rate, with constant-quality or target-bitrate encoding, keyframe interval, colour tags, rotation metadata and fast start
 * Whole-file transcode, trim (frame-accurate or keyframe-snapped) and lossless concatenation
 * Capability flags, so a consumer can ask an engine what it supports before calling it

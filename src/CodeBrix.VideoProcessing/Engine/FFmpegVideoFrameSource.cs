@@ -57,7 +57,7 @@ internal sealed class FFmpegVideoFrameSource : IVideoFrameSource
     private bool ended;
     private bool disposed;
 
-    internal FFmpegVideoFrameSource(string path, VideoStreamInfo stream, VideoSourceOptions sourceOptions, FFOptions options, long maximumFrames = 0)
+    internal FFmpegVideoFrameSource(string path, VideoStreamInfo stream, VideoSourceOptions sourceOptions, FFOptions options, bool isMirrored = false, long maximumFrames = 0)
     {
         this.path = path;
         this.stream = stream;
@@ -109,6 +109,7 @@ internal sealed class FFmpegVideoFrameSource : IVideoFrameSource
             SourceHasAlpha = stream.HasAlpha,
             HasAlpha = deliverAlpha || layout == VideoPixelLayout.Rgba,
             RotationDegrees = stream.RotationDegrees,
+            IsMirrored = isMirrored,
             ColorRange = deliveredRange,
             ColorMatrix = deliveredMatrix
         };

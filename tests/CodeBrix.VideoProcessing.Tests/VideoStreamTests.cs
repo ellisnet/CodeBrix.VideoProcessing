@@ -106,6 +106,117 @@ public class VideoStreamTests
         video.Rotation.Should().Be(90);
     }
 
+    // A display matrix as ffmpeg builds it: av_display_rotation_set (counter-clockwise degrees), then
+    // av_display_matrix_flip (hflip negates the first column, vflip the second). 16.16 fixed point, w = 1 << 30.
+    private static long[] DisplayMatrix(int counterClockwiseDegrees, bool hflip, bool vflip)
+    {
+        double radians = -counterClockwiseDegrees * Math.PI / 180;
+        long c = (long)Math.Round(Math.Cos(radians) * 65536);
+        long s = (long)Math.Round(Math.Sin(radians) * 65536);
+        long[] matrix = { c, -s, 0, s, c, 0, 0, 0, 1L << 30 };
+        for (int i = 0; i < 9; i++)
+        {
+            if (hflip && i % 3 == 0) matrix[i] = -matrix[i];
+            if (vflip && i % 3 == 1) matrix[i] = -matrix[i];
+        }
+
+        return matrix;
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    [InlineData(180)]
+    [InlineData(270)]
+    [InlineData(-90)]
+    public void A_rotation_alone_is_not_mirrored(int degrees)
+    {
+        //Arrange
+        long[] matrix = DisplayMatrix(degrees, hflip: false, vflip: false);
+
+        //Assert
+        (MediaAnalysisUtils.DisplayMatrixDeterminant(matrix)).Should().BeGreaterThan(0);
+        (MediaAnalysisUtils.IsMirroredDisplayMatrix(matrix)).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(0, true, false)]
+    [InlineData(0, false, true)]
+    [InlineData(90, true, false)]
+    [InlineData(90, false, true)]
+    [InlineData(180, true, false)]
+    [InlineData(180, false, true)]
+    [InlineData(270, true, false)]
+    [InlineData(270, false, true)]
+    public void A_single_flip_on_any_rotation_is_mirrored(int degrees, bool hflip, bool vflip)
+    {
+        //Arrange
+        long[] matrix = DisplayMatrix(degrees, hflip, vflip);
+
+        //Assert
+        (MediaAnalysisUtils.DisplayMatrixDeterminant(matrix)).Should().BeLessThan(0);
+        (MediaAnalysisUtils.IsMirroredDisplayMatrix(matrix)).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    [InlineData(180)]
+    [InlineData(270)]
+    public void Both_flips_are_a_rotation_and_not_mirrored(int degrees)
+        => (MediaAnalysisUtils.IsMirroredDisplayMatrix(DisplayMatrix(degrees, hflip: true, vflip: true))).Should().BeFalse();
+
+    [Fact]
+    public void Full_range_matrix_entries_do_not_overflow_the_determinant()
+    {
+        //Arrange
+        long[] matrix = { int.MaxValue, int.MinValue, 0, int.MaxValue, int.MaxValue, 0, 0, 0, 1L << 30 };
+
+        //Assert
+        (MediaAnalysisUtils.IsMirroredDisplayMatrix(matrix)).Should().BeFalse();
+        (MediaAnalysisUtils.IsMirroredDisplayMatrix(null)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ParseDisplayMatrix_reads_ffprobe_text()
+    {
+        //Act
+        long[] matrix = MediaAnalysisUtils.ParseDisplayMatrix(
+            "\n00000000:            0      -65536           0\n00000001:       -65536           0           0\n00000002:            0           0  1073741824\n");
+
+        //Assert
+        (matrix).Should().Equal(0L, -65536L, 0L, -65536L, 0L, 0L, 0L, 0L, 1073741824L);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("\n00000000:            0      -65536           0\n")]
+    [InlineData("\n00000000:            0      x           0\n00000001:       -65536           0           0\n00000002:            0           0  1073741824\n")]
+    public void ParseDisplayMatrix_is_null_for_anything_but_nine_integers(string text)
+        => (MediaAnalysisUtils.ParseDisplayMatrix(text)).Should().BeNull();
+
+    [Fact]
+    public void IsDisplayMatrixMirrored_reads_the_display_matrix_side_data()
+    {
+        //Act
+        VideoStream mirrored = ParseVideo("\"side_data_list\": [ { \"side_data_type\": \"Display Matrix\", " +
+            "\"displaymatrix\": \"\\n00000000:       -65536           0           0\\n00000001:            0       65536           0\\n00000002:            0           0  1073741824\\n\", " +
+            "\"rotation\": -180 } ]");
+        VideoStream rotated = ParseVideo("\"side_data_list\": [ { \"side_data_type\": \"Display Matrix\", " +
+            "\"displaymatrix\": \"\\n00000000:            0       65536           0\\n00000001:       -65536           0           0\\n00000002:            0           0  1073741824\\n\", " +
+            "\"rotation\": -90 } ]");
+        VideoStream bare = ParseVideo("\"side_data_list\": [ { \"side_data_type\": \"Display Matrix\", \"rotation\": -90 } ]");
+        VideoStream none = ParseVideo(null);
+
+        //Assert
+        (mirrored.IsDisplayMatrixMirrored).Should().BeTrue();
+        (mirrored.DisplayMatrixRotation).Should().Be(-180);
+        (rotated.IsDisplayMatrixMirrored).Should().BeFalse();
+        (bare.IsDisplayMatrixMirrored).Should().BeFalse();
+        (none.IsDisplayMatrixMirrored).Should().BeFalse();
+    }
+
     [Fact]
     public void Duration_keeps_ffprobe_microseconds()
     {

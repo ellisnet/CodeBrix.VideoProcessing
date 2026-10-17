@@ -32,7 +32,8 @@ namespace CodeBrix.VideoProcessing.Engine;
 /// built with libx265 (H.264 needs libx264); an ffmpeg without them fails the write with a
 /// <see cref="VideoProcessingException" /> naming the missing encoder. It also reports
 /// <see cref="VideoProcessorCapabilities.ExternalTools" /> and offers its <see cref="Tools" /> (see
-/// <see cref="VideoProcessorExtensions.TryGetExternalTools" />).
+/// <see cref="VideoProcessorExtensions.TryGetExternalTools" />), and <see cref="VideoProcessorCapabilities.Chapters" />:
+/// <see cref="Analyse" /> reads the source's chapter markers through ffprobe.
 /// </para>
 /// <para>
 /// HOW: <see cref="Analyse" /> runs ffprobe; frame and sample sources and <see cref="Snapshot" /> run ffmpeg
@@ -55,7 +56,8 @@ public sealed class FFmpegVideoProcessor : IVideoProcessor, IExternalToolHost
         VideoProcessorCapabilities.I444FrameSource |
         VideoProcessorCapabilities.GrayFrameSource |
         VideoProcessorCapabilities.HighBitDepthFrameSource |
-        VideoProcessorCapabilities.ExternalTools;
+        VideoProcessorCapabilities.ExternalTools |
+        VideoProcessorCapabilities.Chapters;
 
     private readonly FFOptions options;
 
@@ -102,10 +104,10 @@ public sealed class FFmpegVideoProcessor : IVideoProcessor, IExternalToolHost
         if (at < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(at), at, "The position cannot be negative.");
 
         FFOptions current = Options;
-        VideoStreamInfo stream = RequireVideo(path, current, cancellationToken);
+        VideoStreamInfo stream = RequireVideo(path, current, cancellationToken, out bool isMirrored);
         var sourceOptions = new VideoSourceOptions { StartTime = at, IncludeAlpha = true };
 
-        using var source = new FFmpegVideoFrameSource(path, stream, sourceOptions, current, maximumFrames: 1);
+        using var source = new FFmpegVideoFrameSource(path, stream, sourceOptions, current, isMirrored, maximumFrames: 1);
         using CancellationTokenRegistration registration = cancellationToken.Register(source.Dispose);
         try
         {
@@ -134,8 +136,8 @@ public sealed class FFmpegVideoProcessor : IVideoProcessor, IExternalToolHost
         if (options.BitDepth > 8) this.RequireCapability(VideoProcessorCapabilities.HighBitDepthFrameSource, $"{options.BitDepth}-bit frames");
 
         FFOptions current = Options;
-        VideoStreamInfo stream = RequireVideo(path, current, CancellationToken.None);
-        return new FFmpegVideoFrameSource(path, stream, options, current);
+        VideoStreamInfo stream = RequireVideo(path, current, CancellationToken.None, out bool isMirrored);
+        return new FFmpegVideoFrameSource(path, stream, options, current, isMirrored);
     }
 
     /// <inheritdoc />
@@ -263,10 +265,13 @@ public sealed class FFmpegVideoProcessor : IVideoProcessor, IExternalToolHost
         if (profile == StandardVideoProfile.Mp4HevcAac) this.RequireCapability(VideoProcessorCapabilities.HevcOutput, "HEVC output");
     }
 
-    private static VideoStreamInfo RequireVideo(string path, FFOptions options, CancellationToken cancellationToken)
+    private static VideoStreamInfo RequireVideo(string path, FFOptions options, CancellationToken cancellationToken, out bool isMirrored)
     {
-        MediaInfo info = FFmpegProbe.AnalyseAsync(path, options, cancellationToken).GetAwaiter().GetResult();
-        return info.PrimaryVideo ?? throw new MediaFormatException($"'{path}' has no video stream.");
+        IMediaAnalysis analysis = FFmpegProbe.ProbeAsync(path, options, cancellationToken).GetAwaiter().GetResult();
+        MediaInfo info = FFmpegProbe.FromAnalysis(analysis);
+        VideoStreamInfo stream = info.PrimaryVideo ?? throw new MediaFormatException($"'{path}' has no video stream.");
+        isMirrored = FFmpegProbe.IsMirrored(analysis, stream.Index);
+        return stream;
     }
 
     // Runs a one-shot ffmpeg command: progress from ffmpeg's time= lines, cancellation through the processor,

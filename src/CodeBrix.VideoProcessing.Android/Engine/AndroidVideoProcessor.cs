@@ -26,7 +26,8 @@ namespace CodeBrix.VideoProcessing.Android.Engine;
 /// DirectTranscode, DirectTrim and DirectConcatenate always; HevcOutput when the device has a "video/hevc" encoder;
 /// HighBitDepthFrameSource when the device has a video decoder that lists P010 output
 /// (<see cref="HighBitDepthDecoders" />). Never AlphaFrameSource (Android's decoders expose no alpha),
-/// I444FrameSource (they deliver 4:2:0) or ExternalTools (there are no command-line tools to run on Android).
+/// I444FrameSource (they deliver 4:2:0), ExternalTools (there are no command-line tools to run on Android) or
+/// Chapters (the platform exposes no chapter markers).
 /// </para>
 /// <para>
 /// ANALYSE reports subtitle (timed text) tracks - for example an MP4's 3GPP timed text as "mov_text" - with their

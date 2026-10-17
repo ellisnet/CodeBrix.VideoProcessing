@@ -152,6 +152,10 @@ CAPABILITIES
                                      is false. (Desktop consumers that run
                                      ffmpeg lines get them from the ffmpeg
                                      engine.)
+    Chapters                 NEVER   MediaExtractor and MediaMetadataRetriever
+                                     expose no chapter markers, so Analyse
+                                     always leaves MediaInfo.Chapters empty -
+                                     which here says nothing about the file.
     HighBitDepthFrameSource  when    Set only when MediaCodecList has a VIDEO
                              device  DECODER whose capabilities list
                              has a   COLOR_FormatYUVP010 (10-bit output) for one
@@ -252,7 +256,9 @@ OpenVideo(path, options)
     SEEK: to the sync sample at or before the target, decoder flushed, earlier
     pictures decoded and dropped. CanSeek is true.
     ROTATION: pictures stay in stored orientation; Info.RotationDegrees says
-    how to display them.
+    how to display them. Info.IsMirrored is ALWAYS false: the track format
+    gives only a rotation angle ("rotation-degrees"), never the container's
+    display matrix, so a mirrored source cannot be detected.
     OWNERSHIP: a frame is valid until the next TryReadFrame, Seek or Dispose
     (three buffers circulate); Copy() to keep it.
     Info.ColorRange is Full when the stream is tagged full range, else Limited.

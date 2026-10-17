@@ -939,20 +939,35 @@ WHAT THIS PORT DOES INSTEAD
     * The connected sink reads to EOF (ffmpeg's write end closed), During
       completes, and only then are the output pipes posted
       (FFMpegArguments.PostOutputPipes, in Process()'s finally; idempotent).
-    * BOUNDED. There was no existing pipe or drain timeout in the processor to
-      reuse, so the wait is bounded by the internal
-      FFMpegArgumentProcessor.OutputPipeDrainTimeout (30 s, counted from
-      ffmpeg's exit; tests shorten it). ffmpeg can only have left one pipe
-      buffer's worth unread, so a working sink drains in a fraction of that.
-      On timeout the sink is cancelled, the pipe disposed, and Process() throws
-      FFMpegException (Type = Process) "An output pipe sink did not drain ..."
-      - raised regardless of throwOnError, with whatever the abandoned sink
-      threw as InnerException. It is never swallowed.
-    * CANCELLATION stays prompt. A cancel before ffmpeg exits makes the exit
-      handler cancel the sinks and post the output pipes at once (upstream's
-      behaviour exactly); a cancel that arrives while a sink is draining
-      cancels sinkCancellationSource from OnCancelEvent. Either way the run ends
-      in OperationCanceledException, which still outranks everything.
+    * BOUNDED. The wait is bounded by the PUBLIC FFOptions.OutputPipeDrainTimeout
+      (default 30 s, counted from ffmpeg's exit; >= 0 or InfiniteTimeSpan,
+      checked by ResolveOutputPipeDrainTimeout before ffmpeg starts). The
+      internal nullable FFMpegArgumentProcessor.OutputPipeDrainTimeout, when
+      set, overrides it for that processor (tests use it). ffmpeg can only
+      have left one pipe buffer's worth unread, so a working sink drains in a
+      fraction of that. On timeout the sink is cancelled, the pipe disposed,
+      and Process() throws FFMpegException (Type = Process) "An output pipe
+      sink did not drain ..." - raised regardless of throwOnError, with
+      whatever the abandoned sink threw as InnerException. It is never
+      swallowed.
+    * CANCELLATION stays prompt and never waits for the drain. A cancel before
+      ffmpeg exits makes the exit handler cancel the sinks and post the output
+      pipes at once (upstream's behaviour exactly); a cancel that arrives while
+      a sink is draining completes cancelRequested from OnCancelEvent, which
+      ends the drain wait at once, and the sinks are torn down the same way.
+      duringTask is NOT awaited on its own in the Task.WhenAll (that waited
+      without bound for a sink that ignores its token): after a cancel or a
+      drain timeout a torn-down sink gets TornDownSinkGrace (1 s) to return,
+      then is abandoned (its exception observed, not raised).
+    * A CANCEL IS REPORTED AS A CANCEL. A sink that ignores its token fails on
+      the disposed pipe - ObjectDisposedException ("Cannot access a closed
+      pipe"), IOException - and that used to reach the caller instead of the
+      cancel (and only after the full 30 s when the cancel came during the
+      drain). After a user cancel, ObjectDisposedException / IOException /
+      OperationCanceledException from the sinks or pipes are mapped
+      (IsTearDownFailure) to OperationCanceledException carrying the token
+      given to CancellableThrough, with the original as InnerException. Any
+      other exception a sink throws still propagates unchanged.
     * A sink's own exception (thrown part way, or after reading to EOF - the
       latter used to be masked by the cancellation) propagates out of
       ProcessSynchronously / ProcessAsynchronously unchanged. Both share
